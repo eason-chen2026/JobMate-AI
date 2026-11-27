@@ -1,0 +1,18 @@
+# 严禁提交个人隐私数据、数据库、生成的简历、个人离线版与浏览器登录态
+private/
+data/
+job-copilot-data/
+*.private.json
+config.local.json
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+resumes/
+tasks/
+browser-profile/
+*个人离线版*.html
+node_modules/
+.DS_Store
+Thumbs.db

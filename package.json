@@ -1,0 +1,14 @@
+{
+  "name": "jobmate-ai",
+  "version": "1.1.0",
+  "description": "职伴 AI (JobMate-AI) — 隐私优先、零第三方依赖的全行业本地求职助手（智能岗位匹配、双模式AI定制简历与PDF、13大行业深度题库与模拟面试、谈薪博弈、职业规划与手机PWA版）",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node src/self-test.mjs",
+    "build:pages": "node src/build-pages.mjs"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

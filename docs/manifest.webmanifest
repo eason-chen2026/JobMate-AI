@@ -1,0 +1,9 @@
+{
+  "name": "职伴 AI (JobMate-AI) · 全行业求职助手",
+  "short_name": "职伴AI",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f6fb",
+  "theme_color": "#0f172a",
+  "description": "零隐私上云、13大行业每岗15+深度题库、覆盖应届生/AI/社招的开源求职与面试谈薪助手"
+}
