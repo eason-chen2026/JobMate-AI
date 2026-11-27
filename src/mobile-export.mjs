@@ -283,9 +283,20 @@ ${!isPersonal ? '<link rel="manifest" href="./manifest.webmanifest" />' : ''}
               </div>
               <div id="s-match-hint" class="muted" style="margin-bottom:10px;">输入任意岗位，自动匹配 13 大行业 15+ 题库与薪资百科，并支持按「练手训练 / 主力匹配 / 进阶挑战」三档推荐。</div>
               <div class="row" style="margin-bottom:10px;">
-                <button class="primary" style="flex:1;" id="btn-m-rec" onclick="runMobileTierRecommend()">${svgTag('sparkles', 16)}<span>根据简历生成三档推荐（含联网检索）</span></button>
+                <button class="primary" style="flex:1;" id="btn-m-rec" onclick="runMobileTierRecommend(false)">${svgTag('sparkles', 16)}<span>根据简历生成三档推荐</span></button>
+                <button class="success" style="flex:1;" id="btn-m-rec-more" onclick="runMobileTierRecommend(true)">${svgTag('plus', 16)}<span>+ 换一批 / 加更多岗位</span></button>
               </div>
               <div id="s-links" class="row"></div>
+              <details id="m-collab-rec-box" style="margin-top:10px; border:1px dashed #93c5fd; border-radius:10px; padding:10px 12px; background:#fff;">
+                <summary class="sum-link" style="color:#1e3a8a;">${svgTag('upload', 15)}<span>零 Key 联网批量导入真实岗位（模式 B · 支持持续追加）</span></summary>
+                <div class="muted" style="margin-top:6px;">复制脱敏指令发给任意联网 AI 助手，把返回的企业岗位 JSON 贴进来，即可按三档自动分类并支持多次追加。</div>
+                <div class="row" style="margin-top:8px;">
+                  <button class="sm-btn" onclick="copyMobileCollabRecPrompt()">复制脱敏联网搜岗指令</button>
+                  <button class="sm-btn primary" onclick="importMobileCollabRecJson(false)">导入并覆盖</button>
+                  <button class="sm-btn success" onclick="importMobileCollabRecJson(true)">追加到当前三档</button>
+                </div>
+                <textarea id="m-collab-rec-json" rows="3" style="margin-top:8px;" placeholder="将联网 AI 返回的岗位 JSON 数组粘贴到这里，点击「导入并覆盖」或「追加到当前三档」"></textarea>
+              </details>
               <div id="m-rec-results" style="margin-top:12px;"></div>
             </div>
 
@@ -1233,13 +1244,228 @@ function updateSearchLinks() {
     \`<button onclick="jumpToTemplate('\${escAttr(matched.id)}', 'prep')">\${ico('target', 16)}<span>刷该行业 \${(matched.questions || []).length} 道题</span></button>\`;
 }
 
-/* ===== 手机/全端三档智能荐岗（Gemini 原生联网搜索 + 零 Key 本地三档引擎） ===== */
+/* ===== 手机/全端三档智能荐岗（Gemini 原生联网搜索 + 零 Key 多批策略与模式 B 追加导入） ===== */
 const MOBILE_TIER_META = {
   practice: { label: '练手训练', color: 'green', desc: '门槛友好 · 先约面刷手感与测报价' },
   core: { label: '主力匹配', color: 'blue', desc: '经历与薪资最契合 · 核心冲 Offer' },
   stretch: { label: '进阶挑战', color: 'amber', desc: '薪资/平台高一档 · 用量化成果破格跃迁' },
 };
 let mobileRecList = [];
+let mobileRecModeLabel = '';
+let mobileRecBatch = 0;
+const mobileDismissedKeys = new Set();
+
+function mobileRecKey(c) {
+  return String(c?.company || '').trim().toLowerCase() + '|' + String(c?.title || '').trim().toLowerCase();
+}
+
+function parseMobileSalaryMid(salaryText) {
+  const s = String(salaryText || '').replace(/,/g, '');
+  const km = s.match(/(\\d+(?:\\.\\d+)?)\\s*[-~～至]\\s*(\\d+(?:\\.\\d+)?)\\s*[kK千]/);
+  if (km) return (Number(km[1]) + Number(km[2])) / 2;
+  const wm = s.match(/(\\d+(?:\\.\\d+)?)\\s*[-~～至]\\s*(\\d+(?:\\.\\d+)?)\\s*万/);
+  if (wm) {
+    const a = Number(wm[1]);
+    const b = Number(wm[2]);
+    return a >= 10 || /年/.test(s) ? ((a + b) * 5) / 12 : (a + b) * 5;
+  }
+  const sk = s.match(/(\\d+(?:\\.\\d+)?)\\s*[kK千]/);
+  return sk ? Number(sk[1]) : 0;
+}
+
+function renderMobileRecResults() {
+  const box = document.getElementById('m-rec-results');
+  if (!box) return;
+  if (!mobileRecList.length) {
+    box.innerHTML = '<div class="box muted">当前推荐池为空，点击上方「根据简历生成三档推荐」或展开「模式 B」导入联网搜回的企业岗位。</div>';
+    return;
+  }
+  const groups = ['practice', 'core', 'stretch'];
+  const hintLine = mobileRecModeLabel.includes('零 Key')
+    ? '<br/>说明：纯静态网页受浏览器安全策略限制，未填 Key 时展示多细分方向「三档策略靶标」（每档多条且可点「+ 换一批」持续追加）；如需<strong>网页直连实时抓真实公司</strong>，可在「谈薪与设置」填入免费 Gemini Key，或点上方「模式 B」让联网 AI 搜出真实公司 JSON 贴进来。'
+    : '';
+  box.innerHTML =
+    \`<div class="box" style="margin-top:0; margin-bottom:8px; background:#fffbeb; border-color:#fde68a; color:#78350f; font-size:13.5px;"><strong>当前模式：\${esc(mobileRecModeLabel)}</strong>（共 <strong>\${mobileRecList.length}</strong> 个候选，支持切换档位与移除）\${hintLine}</div>\` +
+    groups.map((tId) => {
+      const meta = MOBILE_TIER_META[tId];
+      const list = mobileRecList.filter((c) => c.tier === tId);
+      return \`
+        <div class="box" style="margin-top:8px; background:#fff;">
+          <div class="row between" style="margin-bottom:6px;">
+            <span class="pill \${meta.color}">\${esc(meta.label)}（\${list.length}）</span>
+            <span class="muted">\${esc(meta.desc)}</span>
+          </div>
+          \${list.length ? list.map((c) => \`
+            <div style="border-top:1px dashed #e2e8f0; padding-top:8px; margin-top:8px;">
+              <div class="row between">
+                <strong>\${esc(c.company)} · \${esc(c.title)}</strong>
+                <span class="pill green">\${c.match_score}分</span>
+              </div>
+              <div class="muted" style="margin-top:3px;">\${esc(c.city)} ｜ \${esc(c.salary)}\${c.platform ? ' ｜ ' + esc(c.platform) : ''}</div>
+              <div style="font-size:13.5px; margin-top:4px;">\${esc(c.tier_reason)}</div>
+              <div class="row" style="margin-top:8px; gap:6px;">
+                <select aria-label="切换档位" style="width:auto; padding:6px 8px; font-size:13px;" onchange="moveMobileRecTier('\${escAttr(c.id)}', this.value)">
+                  <option value="practice" \${tId === 'practice' ? 'selected' : ''}>练手训练</option>
+                  <option value="core" \${tId === 'core' ? 'selected' : ''}>主力匹配</option>
+                  <option value="stretch" \${tId === 'stretch' ? 'selected' : ''}>进阶挑战</option>
+                </select>
+                <button class="danger sm-btn" onclick="removeMobileRecItem('\${escAttr(c.id)}')">移除</button>
+                <a class="link-btn sm-btn" href="\${escAttr(c.url)}" target="_blank" rel="noopener">搜实招原岗</a>
+                <button class="success sm-btn" style="flex:1; min-width:165px;" onclick="adoptMobileRecommendedJob('\${escAttr(c.id)}')">\${ico('check', 15)}<span>加入目标岗位并生成简历+话术</span></button>
+              </div>
+            </div>
+          \`).join('') : '<div class="muted" style="padding:6px 0;">本档暂无候选，可点「+ 换一批 / 加更多岗位」或从其他档调入</div>'}
+        </div>
+      \`;
+    }).join('');
+}
+
+function moveMobileRecTier(recId, newTier) {
+  if (!['practice', 'core', 'stretch'].includes(newTier)) return;
+  const idx = mobileRecList.findIndex((x) => x.id === recId);
+  if (idx < 0) return;
+  mobileRecList[idx].tier = newTier;
+  renderMobileRecResults();
+  toast('已调整至「' + (MOBILE_TIER_META[newTier]?.label || newTier) + '」');
+}
+
+function removeMobileRecItem(recId) {
+  const idx = mobileRecList.findIndex((x) => x.id === recId);
+  if (idx < 0) return;
+  const [removed] = mobileRecList.splice(idx, 1);
+  const k = mobileRecKey(removed);
+  if (k !== '|') mobileDismissedKeys.add(k);
+  renderMobileRecResults();
+  toast('已移除「' + removed.company + '」');
+}
+
+function mergeMobileCandidates(incoming, appendMode) {
+  if (!appendMode) {
+    mobileRecList = [];
+  }
+  const seen = new Set(mobileRecList.map(mobileRecKey));
+  let added = 0;
+  for (const item of incoming || []) {
+    const k = mobileRecKey(item);
+    if (k === '|' || seen.has(k) || mobileDismissedKeys.has(k)) continue;
+    seen.add(k);
+    mobileRecList.push(item);
+    added += 1;
+  }
+  return added;
+}
+
+function buildMobileStrategyBatch(city, kw, sal, matched, batchIdx) {
+  const lowMin = Math.max(5, Math.round(sal * 0.78));
+  const lowMax = Math.round(sal * 0.98);
+  const midMin = Math.round(sal * 0.95);
+  const midMax = Math.round(sal * 1.25);
+  const highMin = Math.round(sal * 1.25);
+  const highMax = Math.round(sal * 1.65);
+  const baseRole = kw.replace(/^(高级|资深|首席|初级)/, '').replace(/(负责人|总监|主管)$/, '').trim() || kw;
+  const ts = Date.now() + '_' + batchIdx;
+
+  const variants = [
+    {
+      p: ['成长型小团队（练手热身）', '初创垂直业务线（刷面试手感）'],
+      c: ['垂类优质企业（主力靶标）', '稳健增长团队（高契合主攻）'],
+      s: ['头部平台 / 上市团队（进阶冲刺）', '高潜独角兽业务线（薪资跃迁）'],
+    },
+    {
+      p: ['区域中小型公司（保底试面）', '新锐代运营 / 服务商团队（练话术）'],
+      c: ['品牌自营核心部门（主力方向）', '盈利型成熟业务线（稳健冲 Offer）'],
+      s: ['集团创新事业部（管理突破）', '跨区域 / 出海增长团队（高溢价岗）'],
+    },
+    {
+      p: ['急招补位业务团队（高约面率）', '精细化执行小团队（测报价反应）'],
+      c: ['行业中腰部标杆企业（核心匹配）', '多条线并行业务组（技能全对齐）'],
+      s: ['头部大厂生态核心岗（履历背书）', '0-1 牵头攻坚团队（高回报挑战）'],
+    },
+  ];
+  const v = variants[batchIdx % variants.length];
+  const suffix = batchIdx >= variants.length ? ' · 扩展批' + (batchIdx + 1) : '';
+
+  return [
+    {
+      id: 'mrec_p1_' + ts,
+      tier: 'practice',
+      company: \`\${city}\${v.p[0]}\${suffix}\`,
+      title: \`\${baseRole}（面试热身岗）\`,
+      city: \`\${city} · 建议核实双休\`,
+      salary: \`\${lowMin}-\${lowMax}K\`,
+      url: \`https://www.zhipin.com/web/geek/job?query=\${encodeURIComponent(baseRole)}\`,
+      match_score: 90,
+      tier_reason: '门槛友好、约面概率高，适合先拿 2 场真实面试测试自我介绍节奏与追问反应。',
+      jd_text: \`核心职责：独立推进 \${baseRole} 日常业务落地与数据复盘，匹配 \${matched.greetingFocus}。\`,
+      platform: '三档策略靶标',
+    },
+    {
+      id: 'mrec_p2_' + ts,
+      tier: 'practice',
+      company: \`\${city}\${v.p[1]}\${suffix}\`,
+      title: \`资深\${baseRole}执行岗\`,
+      city: \`\${city} · 门槛友好\`,
+      salary: \`\${lowMin}-\${Math.round(sal * 1.02)}K\`,
+      url: \`https://www.liepin.com/zhaopin/?key=\${encodeURIComponent(baseRole)}\`,
+      match_score: 88,
+      tier_reason: '业务复杂度适中，适合借此验证用人方对薪资底线和转岗/空窗解释的真实反馈。',
+      jd_text: \`核心职责：承担 \${baseRole} 日常运营与项目交付，保障核心指标稳定达成。\`,
+      platform: '三档策略靶标',
+    },
+    {
+      id: 'mrec_c1_' + ts,
+      tier: 'core',
+      company: \`\${city}\${v.c[0]}\${suffix}\`,
+      title: kw,
+      city: \`\${city} · 双休优先\`,
+      salary: \`\${midMin}-\${midMax}K\`,
+      url: \`https://www.zhipin.com/web/geek/job?query=\${encodeURIComponent(kw)}\`,
+      match_score: 93,
+      tier_reason: \`与你简历底稿、核心技能（\${matched.name}）及 \${sal}K 目标薪资最贴合，建议重点精力冲 Offer。\`,
+      jd_text: \`核心职责：全面负责 \${kw} 核心指标达成、流程优化与跨团队协同，重点考察 \${matched.greetingFocus}。\`,
+      platform: '三档策略靶标',
+    },
+    {
+      id: 'mrec_c2_' + ts,
+      tier: 'core',
+      company: \`\${city}\${v.c[1]}\${suffix}\`,
+      title: kw.includes(baseRole) ? \`高级\${baseRole}\` : kw,
+      city: \`\${city} · 重点主攻\`,
+      salary: \`\${Math.round(sal * 1.0)}-\${Math.round(sal * 1.32)}K\`,
+      url: \`https://www.liepin.com/zhaopin/?key=\${encodeURIComponent(kw)}\`,
+      match_score: 91,
+      tier_reason: '岗位权责与过往实战最同频，适合作为同步谈薪比价的第二主力梯队。',
+      jd_text: \`核心职责：围绕 \${kw} 制定阶段打法并推进落地，沉淀可复制的增长经验。\`,
+      platform: '三档策略靶标',
+    },
+    {
+      id: 'mrec_s1_' + ts,
+      tier: 'stretch',
+      company: \`\${city}\${v.s[0]}\${suffix}\`,
+      title: /负责人|总监|架构师|专家/.test(kw) ? \`高级\${baseRole}总监\` : \`\${baseRole}负责人 / 专家\`,
+      city: \`\${city} · 大平台背书\`,
+      salary: \`\${highMin}-\${highMax}K\`,
+      url: \`https://www.bing.com/search?q=\${encodeURIComponent(city + ' ' + kw + ' 负责人 招聘')}\`,
+      match_score: 83,
+      tier_reason: '薪资与平台跃迁一档，适合用你最硬核的量化增量成果和系统方法论争取破格面试。',
+      jd_text: \`核心职责：主导 \${baseRole} 战略规划、高阶项目攻坚与团队提效，看重从 0-1 或大规模拿结果能力。\`,
+      platform: '三档策略靶标',
+    },
+    {
+      id: 'mrec_s2_' + ts,
+      tier: 'stretch',
+      company: \`\${city}\${v.s[1]}\${suffix}\`,
+      title: \`\${baseRole}团队Leader / 资深专家\`,
+      city: \`\${city} · 高薪冲刺\`,
+      salary: \`\${Math.round(sal * 1.3)}-\${Math.round(sal * 1.75)}K\`,
+      url: \`https://www.zhipin.com/web/geek/job?query=\${encodeURIComponent(baseRole + ' 负责人')}\`,
+      match_score: 80,
+      tier_reason: '对跨部门统筹或更高业务体量有要求，面试前准备 1 份完整破局复盘即可冲刺。',
+      jd_text: \`核心职责：负责核心业务线全局规划与团队管理，推动营收或效率实现跨越式增长。\`,
+      platform: '三档策略靶标',
+    },
+  ];
+}
 
 function buildThreeGreetingsForMobile(job, tier) {
   const r = state.mobileResume || {};
@@ -1264,7 +1490,8 @@ function buildThreeGreetingsForMobile(job, tier) {
   ];
 }
 
-async function runMobileTierRecommend() {
+async function runMobileTierRecommend(appendMode = false) {
+  const isAppend = Boolean(appendMode && mobileRecList.length);
   const r = state.mobileResume || {};
   const city = document.getElementById('s-city').value.trim() || '上海';
   const rawKw = document.getElementById('s-kw').value.trim();
@@ -1274,8 +1501,18 @@ async function runMobileTierRecommend() {
   const matched = detectTemplateClient(kw, (r.summary || '') + ' ' + (r.skills || ''));
   const box = document.getElementById('m-rec-results');
   const btn = document.getElementById('btn-m-rec');
+  const moreBtn = document.getElementById('btn-m-rec-more');
   btn.disabled = true;
-  box.innerHTML = '<div class="box">正在结合你的简历底稿生成「练手训练 / 主力匹配 / 进阶挑战」三档推荐...</div>';
+  if (moreBtn) moreBtn.disabled = true;
+
+  if (!isAppend) {
+    mobileRecBatch = 0;
+    mobileDismissedKeys.clear();
+    box.innerHTML = '<div class="box">正在结合你的简历底稿生成「练手训练 / 主力匹配 / 进阶挑战」三档推荐...</div>';
+  } else {
+    mobileRecBatch += 1;
+    toast('正在为你追加下一批三档岗位...');
+  }
 
   let candidates = [];
   let modeLabel = '本地简历三档策略推荐（零 Key）';
@@ -1283,7 +1520,13 @@ async function runMobileTierRecommend() {
   // 若配置了 Gemini 官方 Key，尝试直接调用 Gemini 原生 Google Search 联网抓真实在招岗位
   if (state.mobileApi?.provider === 'gemini' && state.mobileApi?.apiKey) {
     try {
-      const prompt = \`请使用联网搜索查找「\${city}」地区当前真实在招的「\${kw}」岗位（目标月薪 \${sal}K 左右），按练手训练(practice)、主力匹配(core)、进阶挑战(stretch)各选2个共6个真实岗位。只输出纯 JSON 数组：[{"tier":"practice|core|stretch","company":"公司名","title":"岗位名","city":"城市","salary":"薪资","url":"链接","match_score":86,"tier_reason":"推荐理由","jd_text":"核心要求摘要"}]\`;
+      const existingCos = isAppend
+        ? [...new Set(mobileRecList.map((x) => x.company).filter(Boolean))].slice(0, 15)
+        : [];
+      const excludeHint = existingCos.length ? '。请避开以下已出现公司：' + existingCos.join('、') : '';
+      const count = isAppend ? 6 : 9;
+      const per = isAppend ? 2 : 3;
+      const prompt = \`请使用联网搜索查找「\${city}」地区当前真实在招的「\${kw}」岗位（目标月薪 \${sal}K 左右），按练手训练(practice)、主力匹配(core)、进阶挑战(stretch)各选\${per}个共\${count}个真实岗位\${excludeHint}。只输出纯 JSON 数组：[{"tier":"practice|core|stretch","company":"公司名","title":"岗位名","city":"城市","salary":"薪资","url":"链接","match_score":86,"tier_reason":"推荐理由","jd_text":"核心要求摘要"}]\`;
       const resp = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\${encodeURIComponent(state.mobileApi.apiKey)}\`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1317,89 +1560,82 @@ async function runMobileTierRecommend() {
   }
 
   if (!candidates.length) {
-    const lowMin = Math.max(5, Math.round(sal * 0.78));
-    const lowMax = Math.round(sal * 0.98);
-    const midMin = Math.round(sal * 0.95);
-    const midMax = Math.round(sal * 1.25);
-    const highMin = Math.round(sal * 1.25);
-    const highMax = Math.round(sal * 1.65);
-    const baseRole = kw.replace(/^(高级|资深|首席|初级)/, '').replace(/(负责人|总监|主管)$/, '').trim() || kw;
-    candidates = [
-      {
-        id: 'mrec_p1',
-        tier: 'practice',
-        company: \`\${city}成长型团队（练手靶标）\`,
-        title: \`\${baseRole}（面试练手岗）\`,
-        city: \`\${city} · 建议核实双休\`,
-        salary: \`\${lowMin}-\${lowMax}K\`,
-        url: \`https://www.zhipin.com/web/geek/job?query=\${encodeURIComponent(baseRole)}\`,
-        match_score: 90,
-        tier_reason: '门槛友好、通过率高，专门用来先约 2~3 场面试测试自我介绍节奏、验证高频追问与报价反应。',
-        jd_text: \`核心职责：独立推进 \${baseRole} 日常核心业务落地与数据复盘，具备 \${matched.greetingFocus}。\`,
-        platform: '三档策略靶标',
-      },
-      {
-        id: 'mrec_c1',
-        tier: 'core',
-        company: \`\${city}垂类优质企业（主力靶标）\`,
-        title: kw,
-        city: \`\${city} · 双休优先\`,
-        salary: \`\${midMin}-\${midMax}K\`,
-        url: \`https://www.liepin.com/zhaopin/?key=\${encodeURIComponent(kw)}\`,
-        match_score: 92,
-        tier_reason: \`与你简历底稿、核心技能（\${matched.name}）及 \${sal}K 目标薪资最贴合，建议集中精力拿核心 Offer。\`,
-        jd_text: \`核心职责：全面负责 \${kw} 核心指标达成、流程优化与跨团队协同，重点考察 \${matched.greetingFocus}。\`,
-        platform: '三档策略靶标',
-      },
-      {
-        id: 'mrec_s1',
-        tier: 'stretch',
-        company: \`\${city}头部/大平台团队（进阶冲刺）\`,
-        title: /负责人|总监|架构师|专家/.test(kw) ? \`高级\${baseRole}总监\` : \`\${baseRole}负责人 / 专家\`,
-        city: \`\${city} · 大平台背书\`,
-        salary: \`\${highMin}-\${highMax}K\`,
-        url: \`https://www.bing.com/search?q=\${encodeURIComponent(city + ' ' + kw + ' 负责人 招聘')}\`,
-        match_score: 82,
-        tier_reason: '薪资与平台跃迁一档，适合用你最硬核的量化增量成果和系统方法论争取破格面试。',
-        jd_text: \`核心职责：主导 \${baseRole} 战略规划、高阶项目攻坚与团队提效，看重从 0-1 或大规模拿结果的确定性能力。\`,
-        platform: '三档策略靶标',
-      },
-    ];
+    candidates = buildMobileStrategyBatch(city, kw, sal, matched, mobileRecBatch);
   }
 
-  mobileRecList = candidates;
-  const groups = ['practice', 'core', 'stretch'];
-  box.innerHTML =
-    \`<div class="box" style="margin-top:0; margin-bottom:8px; background:#fffbeb; border-color:#fde68a; color:#78350f; font-size:13.5px;"><strong>当前模式：\${esc(modeLabel)}</strong>\${modeLabel.includes('零 Key') ? '<br/>说明：纯静态网页受浏览器安全策略限制，未填 Key 时展示「三档策略靶标」；如需<strong>零 Key 自动联网抓取真实在招企业</strong>，请在电脑双击「启动求职助手.bat」使用「联网三档荐岗」，或在底部「谈薪与设置」填入免费 Gemini Key 开启网页直连联网搜岗。' : ''}</div>\` +
-    groups.map((tId) => {
-      const meta = MOBILE_TIER_META[tId];
-      const list = candidates.filter((c) => c.tier === tId);
-      if (!list.length) return '';
-      return \`
-        <div class="box" style="margin-top:8px; background:#fff;">
-          <div class="row between" style="margin-bottom:6px;">
-            <span class="pill \${meta.color}">\${esc(meta.label)}（\${list.length}）</span>
-            <span class="muted">\${esc(meta.desc)}</span>
-          </div>
-          \${list.map((c) => \`
-            <div style="border-top:1px dashed #e2e8f0; padding-top:8px; margin-top:8px;">
-              <div class="row between">
-                <strong>\${esc(c.company)} · \${esc(c.title)}</strong>
-                <span class="pill green">\${c.match_score}分</span>
-              </div>
-              <div class="muted" style="margin-top:3px;">\${esc(c.city)} ｜ \${esc(c.salary)}</div>
-              <div style="font-size:13.5px; margin-top:4px;">\${esc(c.tier_reason)}</div>
-              <div class="row" style="margin-top:8px;">
-                <a class="link-btn" href="\${escAttr(c.url)}" target="_blank" rel="noopener">搜实招原岗</a>
-                <button class="success sm-btn" style="flex:1;" onclick="adoptMobileRecommendedJob('\${escAttr(c.id)}')">\${ico('check', 15)}<span>加入目标岗位并生成简历+话术</span></button>
-              </div>
-            </div>
-          \`).join('')}
-        </div>
-      \`;
-    }).join('');
+  mobileRecModeLabel = modeLabel;
+  const addedCount = mergeMobileCandidates(candidates, isAppend);
+  renderMobileRecResults();
+
   btn.disabled = false;
-  toast('三档推荐已就绪，点击即可一键加入并生成专属简历与话术！');
+  if (moreBtn) moreBtn.disabled = false;
+  toast(isAppend ? \`已追加 \${addedCount} 个推荐岗位，当前共 \${mobileRecList.length} 个\` : \`已生成 \${mobileRecList.length} 个三档推荐，可随时增减或调档！\`);
+}
+
+function copyMobileCollabRecPrompt() {
+  const r = state.mobileResume || {};
+  const city = document.getElementById('s-city').value.trim() || '上海';
+  const rawKw = document.getElementById('s-kw').value.trim();
+  const resumeKw = String(r.basic || r.skills || '').split(/[｜|、,，\\/\\n]+/).map((s) => s.trim()).find((s) => s.length >= 2 && s.length <= 16) || '';
+  const kw = rawKw || resumeKw || 'AI产品经理';
+  const sal = Math.max(5, Number(document.getElementById('s-sal').value) || 18);
+  const prompt = \`请使用联网搜索，帮我查找「\${city}」地区当前真实在招的「\${kw}」岗位（目标月薪基准 \${sal}K 左右），精选 12 个真实企业岗位（练手训练、主力匹配、进阶挑战各约 4 个）。只输出纯 JSON 数组：[{"company":"真实公司名","title":"岗位名","city":"\${city}","salary":"如18-25K","platform":"Boss直聘/猎聘","url":"岗位直达链接","tier":"practice|core|stretch","jd_text":"岗位核心职责与要求摘要(80~150字)"}]\`;
+  copyText(prompt);
+}
+
+function importMobileCollabRecJson(appendMode = false) {
+  const isAppend = Boolean(appendMode && mobileRecList.length);
+  const raw = document.getElementById('m-collab-rec-json').value.trim();
+  if (!raw) return toast('请先粘贴联网 AI 返回的岗位 JSON 数组');
+  const city = document.getElementById('s-city').value.trim() || '上海';
+  const kw = document.getElementById('s-kw').value.trim() || '目标岗位';
+  const sal = Math.max(5, Number(document.getElementById('s-sal').value) || 18);
+
+  try {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      const m = raw.match(/\\[[\\s\\S]*\\]/);
+      if (!m) throw new Error('未能解析出 JSON 数组');
+      parsed = JSON.parse(m[0]);
+    }
+    const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.jobs) ? parsed.jobs : [];
+    if (!list.length) throw new Error('JSON 中没有有效岗位');
+
+    const incoming = list
+      .filter((x) => x && (x.company || x.title))
+      .map((x, idx) => {
+        let tier = ['practice', 'core', 'stretch'].includes(x.tier) ? x.tier : '';
+        if (!tier) {
+          const mid = parseMobileSalaryMid(x.salary);
+          if (mid > 0 && mid <= sal * 0.88) tier = 'practice';
+          else if ((mid > 0 && mid >= sal * 1.2) || /总监|负责人|专家|VP/i.test(x.title || '')) tier = 'stretch';
+          else tier = 'core';
+        }
+        return {
+          id: 'mcollab_' + Date.now() + '_' + idx,
+          tier,
+          company: String(x.company || '真实企业').trim(),
+          title: String(x.title || kw).trim(),
+          city: String(x.city || city).trim(),
+          salary: String(x.salary || '薪资面议').trim(),
+          url: String(x.url || \`https://www.zhipin.com/web/geek/job?query=\${encodeURIComponent(x.title || kw)}\`).trim(),
+          match_score: Number(x.match_score) || (tier === 'core' ? 91 : tier === 'practice' ? 88 : 83),
+          tier_reason: String(x.tier_reason || '联网导入真实岗位（已自动按薪资与职级归档）').trim(),
+          jd_text: String(x.jd_text || \`\${x.company} \${x.title}\`).trim(),
+          platform: String(x.platform || '模式B联网导入').trim(),
+        };
+      });
+
+    if (!isAppend) mobileDismissedKeys.clear();
+    mobileRecModeLabel = '模式 B 联网批量导入（真实在招岗位）';
+    const added = mergeMobileCandidates(incoming, isAppend);
+    renderMobileRecResults();
+    toast(isAppend ? \`已追加 \${added} 个真实岗位，当前共 \${mobileRecList.length} 个\` : \`已导入 \${mobileRecList.length} 个真实岗位到三档！\`);
+  } catch (e) {
+    toast('导入失败：' + e.message);
+  }
 }
 
 function adoptMobileRecommendedJob(recId) {

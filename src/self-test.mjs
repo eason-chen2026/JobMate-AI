@@ -441,22 +441,36 @@ try {
   assert.ok(mobilePersonalHtml.includes('示例互娱'), '个人手机离线版应包含个人岗位');
   assert.ok(!mobilePersonalHtml.includes('13800138001'), '个人手机离线版不应包含隐私手机号');
   assert.ok(mobileGenericHtml.includes('runMobileTierRecommend'), '线上通用版缺少三档推荐入口');
+  assert.ok(mobileGenericHtml.includes('moveMobileRecTier'), '线上通用版缺少三档调档交互');
+  assert.ok(mobileGenericHtml.includes('removeMobileRecItem'), '线上通用版缺少推荐岗位移除交互');
+  assert.ok(mobileGenericHtml.includes('importMobileCollabRecJson'), '线上通用版缺少模式 B 批量追加导入交互');
   console.log('[PASS] 8. 多岗位模板库、6维反问、职业规划、PWA及纯净通用/个人双版手机导出验证通过');
 
   // 9. 测试三档精准推荐分类算法 + 一键采纳候选岗位直接生成专属简历与 3 套打招呼话术
   const { classifyAndScoreCandidates, deriveProfileSignals } = await import('./job-finder.mjs');
   const demoSignals = deriveProfileSignals(resumeImported.masterResume, { city: '北京', targetSalaryK: 25 });
-  const demoTiers = classifyAndScoreCandidates(
-    [
-      { id: 'c1', platform: '全网公开招聘', source: 'jobui', company: '示例初创科技', title: '后端开发工程师', city: '北京', salary: '16-20K', experience: '1-3年', education: '本科', companyMeta: '50-99人', url: 'https://example.com/1', jd_text: '负责后端接口开发与维护' },
-      { id: 'c2', platform: '全网公开招聘', source: 'jobui', company: '示例云联网络', title: '后端架构师', city: '北京', salary: '24-32K', experience: '5年', education: '本科', companyMeta: '500-999人', url: 'https://example.com/2', jd_text: '负责分布式系统与高并发架构治理' },
-      { id: 'c3', platform: '全网公开招聘', source: 'jobui', company: '示例大型集团股份有限公司', title: '首席后端架构总监', city: '北京', salary: '40-55K', experience: '8-10年', education: '博士', companyMeta: '10000人以上', url: 'https://example.com/3', jd_text: '负责万人级平台核心架构与团队管理' },
-    ],
-    demoSignals
-  );
-  assert.ok(demoTiers.practice.length >= 1, '三档推荐缺少练手训练档');
-  assert.ok(demoTiers.core.length >= 1, '三档推荐缺少主力匹配档');
-  assert.ok(demoTiers.stretch.length >= 1, '三档推荐缺少进阶挑战档');
+  const multiCandidates = [
+    { id: 'c1', platform: '全网公开招聘', source: 'jobui', company: '示例初创科技', title: '后端开发工程师', city: '北京', salary: '16-20K', experience: '1-3年', education: '本科', companyMeta: '50-99人', url: 'https://example.com/1', jd_text: '负责后端接口开发与维护' },
+    { id: 'c2', platform: '全网公开招聘', source: 'jobui', company: '示例微云软件', title: '后端工程师', city: '北京', salary: '15-19K', experience: '1-3年', education: '大专', companyMeta: '20-99人', url: 'https://example.com/2', jd_text: '负责业务接口开发与数据库维护' },
+    { id: 'c3', platform: '全网公开招聘', source: 'jobui', company: '示例星河信息', title: 'Java后端开发', city: '北京', salary: '18-22K', experience: '2年', education: '本科', companyMeta: '100-499人', url: 'https://example.com/3', jd_text: '负责核心业务接口与系统稳定' },
+    { id: 'c4', platform: '全网公开招聘', source: 'jobui', company: '示例云联网络', title: '后端架构师', city: '北京', salary: '24-32K', experience: '5年', education: '本科', companyMeta: '500-999人', url: 'https://example.com/4', jd_text: '负责分布式系统与高并发架构治理' },
+    { id: 'c5', platform: '全网公开招聘', source: 'jobui', company: '示例智算科技', title: '高级后端开发', city: '北京', salary: '23-30K', experience: '3-5年', education: '本科', companyMeta: '500-999人', url: 'https://example.com/5', jd_text: '负责订单中心与高并发核心链路' },
+    { id: 'c6', platform: '全网公开招聘', source: 'jobui', company: '示例数字引擎', title: '资深后端研发', city: '北京', salary: '25-33K', experience: '5年', education: '本科', companyMeta: '1000-9999人', url: 'https://example.com/6', jd_text: '负责中台服务治理与性能优化' },
+    { id: 'c7', platform: '全网公开招聘', source: 'jobui', company: '示例大型集团股份有限公司', title: '首席后端架构总监', city: '北京', salary: '40-55K', experience: '8-10年', education: '博士', companyMeta: '10000人以上', url: 'https://example.com/7', jd_text: '负责万人级平台核心架构与团队管理' },
+    { id: 'c8', platform: '全网公开招聘', source: 'jobui', company: '示例未来上市科技集团', title: '技术架构负责人', city: '北京', salary: '35-48K', experience: '8年', education: '硕士', companyMeta: '10000人以上', url: 'https://example.com/8', jd_text: '负责万人平台稳定性架构演进' },
+    { id: 'c9', platform: '全网公开招聘', source: 'jobui', company: '示例领航互联网', title: '后端架构专家', city: '北京', salary: '32-45K', experience: '6年', education: '硕士', companyMeta: '1000-9999人', url: 'https://example.com/9', jd_text: '负责核心架构升级与跨团队赋能' },
+  ];
+  const demoTiers = classifyAndScoreCandidates(multiCandidates, demoSignals, { perTierLimit: 5 });
+  assert.ok(demoTiers.practice.length >= 2, `三档推荐练手档应>=2个，当前为 ${demoTiers.practice.length}`);
+  assert.ok(demoTiers.core.length >= 2, `三档推荐主力档应>=2个，当前为 ${demoTiers.core.length}`);
+  assert.ok(demoTiers.stretch.length >= 2, `三档推荐进阶档应>=2个，当前为 ${demoTiers.stretch.length}`);
+
+  const excludedTiers = classifyAndScoreCandidates(multiCandidates, demoSignals, {
+    perTierLimit: 5,
+    excludeKeys: ['示例初创科技|后端开发工程师', '示例云联网络|后端架构师'],
+  });
+  const allExcludedIds = [...excludedTiers.practice, ...excludedTiers.core, ...excludedTiers.stretch].map((x) => x.id);
+  assert.ok(!allExcludedIds.includes('c1') && !allExcludedIds.includes('c4'), 'excludeKeys 未过滤已排除岗位');
 
   // 验证模式 B 导入联网岗位 JSON 并自动三档分类接口
   const importRecResp = await fetch(`${baseUrl}/api/jobs/recommend/import`, {

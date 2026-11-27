@@ -355,8 +355,17 @@ export async function fetchJobuiJobs({ keyword, city = '', page = 1, timeoutMs =
 /**
  * 可选：当用户配置了 Gemini 官方 API Key 时，利用 Gemini 原生 Google Search Grounding 联网补充实时在招岗位
  */
-async function fetchGeminiGroundedJobs(signals, config) {
+async function fetchGeminiGroundedJobs(signals, config, options = {}) {
   if (config.provider !== 'gemini' || !config.apiKey) return [];
+  const count = Math.max(6, Math.min(18, Number(options.count) || 12));
+  const excludeCompanies = [
+    ...new Set(
+      (Array.isArray(options.excludeKeys) ? options.excludeKeys : [])
+        .map((k) => String(k || '').split('|')[0].trim())
+        .filter(Boolean)
+    ),
+  ].slice(0, 20);
+
   const profile = loadPrivateProfile();
   const masterResume = loadMasterResume();
   const sanitized = sanitizeText(
@@ -381,7 +390,10 @@ async function fetchGeminiGroundedJobs(signals, config) {
 
   const model = config.model || 'gemini-2.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(config.apiKey)}`;
-  const prompt = `请使用联网搜索，查找「${signals.city}」地区当前真实在招的「${signals.primaryKeyword}」及相关岗位（目标月薪参考 ${signals.targetSalaryK}K 左右），返回 9 个真实企业的在招职位，尽量覆盖练手热身、主力匹配、进阶挑战三个梯度。
+  const excludeHint = excludeCompanies.length
+    ? `\n请尽量避开这些已推荐过的公司：${excludeCompanies.join('、')}。`
+    : '';
+  const prompt = `请使用联网搜索，查找「${signals.city}」地区当前真实在招的「${signals.primaryKeyword}」及相关岗位（目标月薪参考 ${signals.targetSalaryK}K 左右），返回 ${count} 个真实企业的在招职位，均匀覆盖练手训练、主力匹配、进阶挑战三个梯度（每档约 ${Math.max(2, Math.floor(count / 3))} 个）。${excludeHint}
 只输出纯 JSON 数组（不要 Markdown 代码块，不要解释），每项结构：
 [{"company":"公司名","title":"岗位名","city":"城市","salary":"薪资范围如18-25K","experience":"经验要求","education":"学历要求","platform":"来源平台","url":"岗位链接","jd_text":"岗位核心职责与要求摘要(80-180字)"}]
 候选人脱敏画像参考：${sanitized.sanitizedText}`;
@@ -455,12 +467,19 @@ function parseReqExpYears(expText) {
 /**
  * 对真实抓取到的候选岗位进行匹配打分与三档精准分类（练手训练 / 主力匹配 / 进阶挑战）
  */
-export function classifyAndScoreCandidates(rawJobs, signals) {
+export function classifyAndScoreCandidates(rawJobs, signals, opts = {}) {
+  const perLimit = Math.max(3, Math.min(15, Number(opts.perTierLimit) || 6));
+  const excludeSet = new Set(
+    (opts.excludeKeys instanceof Set ? [...opts.excludeKeys] : Array.isArray(opts.excludeKeys) ? opts.excludeKeys : [])
+      .map((k) => String(k || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
   const seen = new Set();
   const deduped = [];
   for (const job of rawJobs || []) {
     const key = `${String(job.company || '').trim().toLowerCase()}|${String(job.title || '').trim().toLowerCase()}`;
-    if (!job.title || seen.has(key)) continue;
+    if (!job.title || seen.has(key) || excludeSet.has(key)) continue;
     seen.add(key);
     deduped.push(job);
   }
@@ -542,44 +561,53 @@ export function classifyAndScoreCandidates(rawJobs, signals) {
     };
   });
 
-  // 按匹配分先筛优，保留最多 18 条进入三档分配
+  // 按匹配分先筛优，放宽候选池上限以支持动态多条推荐与追加
   scored.sort((a, b) => b.match_score - a.match_score);
-  const topPool = scored.slice(0, 18);
+  const topPool = scored.slice(0, perLimit * 3 + 9);
 
   const buckets = { practice: [], core: [], stretch: [] };
   const unassigned = [];
 
   for (const item of topPool) {
-    if (item.challengeIndex >= 1.5 && buckets.stretch.length < 5) {
+    if (item.challengeIndex >= 1.5 && buckets.stretch.length < perLimit) {
       buckets.stretch.push(item);
-    } else if (item.challengeIndex <= -0.8 && buckets.practice.length < 5) {
+    } else if (item.challengeIndex <= -0.8 && buckets.practice.length < perLimit) {
       buckets.practice.push(item);
     } else {
       unassigned.push(item);
     }
   }
 
-  // 均衡补齐三个档次，保证每档都有清晰推荐（只要总抓回数 >= 3）
+  // 均衡补齐三个档次，动态适配 perLimit 容量
   for (const item of unassigned) {
-    if (buckets.core.length < 5) {
+    if (buckets.core.length < perLimit) {
       buckets.core.push(item);
-    } else if (buckets.practice.length < 4 && item.challengeIndex <= 0.5) {
+    } else if (buckets.practice.length < perLimit && item.challengeIndex <= 0.5) {
       buckets.practice.push(item);
-    } else if (buckets.stretch.length < 4) {
+    } else if (buckets.stretch.length < perLimit) {
       buckets.stretch.push(item);
-    } else {
-      buckets.core.push(item);
+    } else if (buckets.practice.length < perLimit) {
+      buckets.practice.push(item);
     }
   }
 
-  // 如果某一档仍为空且其他档有余量，按 challengeIndex 从两端精准调剂
-  if (buckets.practice.length === 0 && buckets.core.length >= 3) {
+  // 均衡调剂：总数 >= 6 时尽量保障每档至少 2 个；总数 >= 3 时保底每档至少 1 个
+  const minTarget = topPool.length >= 6 ? 2 : topPool.length >= 3 ? 1 : 0;
+  while (buckets.practice.length < minTarget && buckets.core.length > minTarget) {
     buckets.core.sort((a, b) => a.challengeIndex - b.challengeIndex);
     buckets.practice.push(buckets.core.shift());
   }
-  if (buckets.stretch.length === 0 && buckets.core.length >= 3) {
+  while (buckets.stretch.length < minTarget && buckets.core.length > minTarget) {
     buckets.core.sort((a, b) => b.challengeIndex - a.challengeIndex);
     buckets.stretch.push(buckets.core.shift());
+  }
+  while (buckets.practice.length < minTarget && buckets.stretch.length > minTarget) {
+    buckets.stretch.sort((a, b) => a.challengeIndex - b.challengeIndex);
+    buckets.practice.push(buckets.stretch.shift());
+  }
+  while (buckets.stretch.length < minTarget && buckets.practice.length > minTarget) {
+    buckets.practice.sort((a, b) => b.challengeIndex - a.challengeIndex);
+    buckets.stretch.push(buckets.practice.shift());
   }
 
   const enrich = (item, tier) => {
@@ -629,9 +657,9 @@ export function classifyAndScoreCandidates(rawJobs, signals) {
   };
 
   return {
-    practice: buckets.practice.sort((a, b) => b.match_score - a.match_score).slice(0, 5).map((x) => enrich(x, 'practice')),
-    core: buckets.core.sort((a, b) => b.match_score - a.match_score).slice(0, 6).map((x) => enrich(x, 'core')),
-    stretch: buckets.stretch.sort((a, b) => b.match_score - a.match_score).slice(0, 5).map((x) => enrich(x, 'stretch')),
+    practice: buckets.practice.sort((a, b) => b.match_score - a.match_score).slice(0, perLimit).map((x) => enrich(x, 'practice')),
+    core: buckets.core.sort((a, b) => b.match_score - a.match_score).slice(0, perLimit).map((x) => enrich(x, 'core')),
+    stretch: buckets.stretch.sort((a, b) => b.match_score - a.match_score).slice(0, perLimit).map((x) => enrich(x, 'stretch')),
   };
 }
 
@@ -640,7 +668,7 @@ export function classifyAndScoreCandidates(rawJobs, signals) {
  */
 export function buildDiscoverCollabPrompt(signals) {
   return `请使用联网搜索，帮我查找「${signals.city}」地区当前真实在招的「${signals.primaryKeyword}」（相关词：${(signals.queries || []).join(' / ')}）岗位，目标月薪基准 ${signals.targetSalaryK}K 左右。
-请精选 9 个真实在招企业岗位，覆盖：
+请精选 12 个真实在招企业岗位（练手训练、主力匹配、进阶挑战每档约 4 个），覆盖：
 - 练手训练档（门槛友好、适合热身练面试）
 - 主力匹配档（经历与薪资最契合）
 - 进阶挑战档（大平台或高一档薪资/职级）
@@ -666,6 +694,7 @@ export function buildDiscoverCollabPrompt(signals) {
 export function importDiscoveredJobsJson(rawText, options = {}) {
   const masterResume = loadMasterResume();
   const signals = deriveProfileSignals(masterResume, options);
+  const queryPool = [...new Set([...(signals.queries || []), ...(signals.fallbackQueries || []), signals.primaryKeyword].filter(Boolean))];
   const text = String(rawText || '').trim();
   if (!text) throw new Error('请先粘贴联网搜岗返回的 JSON 数组。');
 
@@ -704,7 +733,10 @@ export function importDiscoveredJobsJson(rawText, options = {}) {
       jd_text: String(x.jd_text || `${x.company || ''} ${x.title || ''}`).trim(),
     }));
 
-  const tiers = classifyAndScoreCandidates(normalized, signals);
+  const tiers = classifyAndScoreCandidates(normalized, signals, {
+    perTierLimit: Number(options.perTierLimit) || 12,
+    excludeKeys: options.excludeKeys || [],
+  });
   const totalRecommended = tiers.practice.length + tiers.core.length + tiers.stretch.length;
 
   return {
@@ -712,6 +744,7 @@ export function importDiscoveredJobsJson(rawText, options = {}) {
     signals: {
       primaryKeyword: signals.primaryKeyword,
       queries: signals.queries,
+      queryPool,
       city: signals.city,
       targetSalaryK: signals.targetSalaryK,
       templateId: signals.templateId,
@@ -728,12 +761,19 @@ export function importDiscoveredJobsJson(rawText, options = {}) {
 }
 
 /**
- * 电脑端主入口：根据主简历 + 筛选条件，单次低频联网搜索并输出三档精准推荐
+ * 电脑端主入口：根据主简历 + 筛选条件，单次低频联网搜索（支持翻页与切词追加）并输出三档精准推荐
  */
 export async function searchAndRecommendJobs(options = {}) {
   const masterResume = loadMasterResume();
   const config = loadLocalConfig();
   const signals = deriveProfileSignals(masterResume, options);
+
+  const queryPool = [...new Set([...(signals.queries || []), ...(signals.fallbackQueries || []), signals.primaryKeyword].filter(Boolean))];
+  const safeQueryIndex = queryPool.length ? Math.abs(Number(options.queryIndex) || 0) % queryPool.length : 0;
+  const activeQuery = queryPool[safeQueryIndex] || signals.primaryKeyword;
+  const safePage = Math.max(1, Math.min(5, Number(options.page) || 1));
+  const perTierLimit = Math.max(3, Math.min(15, Number(options.perTierLimit) || 6));
+  const excludeKeys = Array.isArray(options.excludeKeys) ? options.excludeKeys : [];
 
   const sourcesUsed = [];
   const warnings = [];
@@ -742,7 +782,10 @@ export async function searchAndRecommendJobs(options = {}) {
   // 1. 优先：如配置了 Gemini 官方 API Key，使用官方 Google Search Grounding 联网抓取（永不触发验证码）
   if (options.useGeminiSearch !== false && config.provider === 'gemini' && config.apiKey) {
     try {
-      const gList = await fetchGeminiGroundedJobs(signals, config);
+      const gList = await fetchGeminiGroundedJobs(signals, config, {
+        count: perTierLimit * 2,
+        excludeKeys,
+      });
       if (gList.length) sourcesUsed.push(`Gemini联网搜索(${gList.length}条)`);
       collected.push(...gList);
     } catch (err) {
@@ -750,26 +793,36 @@ export async function searchAndRecommendJobs(options = {}) {
     }
   }
 
-  // 2. 公开招聘源：严格单次低频请求（绝不并发狂刷，遇到验证码立即停止不绕过）
+  // 2. 公开招聘源：严格单次低频请求（支持翻页或切换相关短词追加，遇到验证码立即停止不绕过）
+  let jobuiFetchedCount = 0;
   if (collected.length < 8) {
-    const primaryQuery = signals.queries[0] || signals.primaryKeyword;
     try {
-      const list = await fetchJobuiJobs({ keyword: primaryQuery, city: signals.city, page: 1 });
-      if (list.length) sourcesUsed.push(`公开招聘检索(${primaryQuery}: ${list.length}条)`);
+      const list = await fetchJobuiJobs({ keyword: activeQuery, city: signals.city, page: safePage });
+      jobuiFetchedCount = list.length;
+      if (list.length) sourcesUsed.push(`公开招聘检索(${activeQuery}·第${safePage}页: ${list.length}条)`);
       collected.push(...list);
     } catch (err) {
       warnings.push(err.message);
     }
   }
 
-  const tiers = classifyAndScoreCandidates(collected, signals);
+  const tiers = classifyAndScoreCandidates(collected, signals, { perTierLimit, excludeKeys });
   const totalCount = tiers.practice.length + tiers.core.length + tiers.stretch.length;
+  const nextPage = jobuiFetchedCount >= 10 && safePage < 5 ? safePage + 1 : 1;
+  const nextQueryIndex = nextPage === 1 ? (safeQueryIndex + 1) % Math.max(1, queryPool.length) : safeQueryIndex;
 
   return {
     searchedAt: new Date().toISOString(),
+    page: safePage,
+    queryIndex: safeQueryIndex,
+    activeQuery,
+    queryPool,
+    nextPage,
+    nextQueryIndex,
     signals: {
       primaryKeyword: signals.primaryKeyword,
       queries: signals.queries,
+      queryPool,
       city: signals.city,
       targetSalaryK: signals.targetSalaryK,
       templateId: signals.templateId,

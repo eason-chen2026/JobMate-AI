@@ -445,9 +445,12 @@
           </div>
           <div class="row">
             <button onclick="switchTopTab('resume')">先核对主简历</button>
-            <button class="primary" id="btn-run-discover" onclick="runDiscoverJobs()">
+            <button class="primary" id="btn-run-discover" onclick="runDiscoverJobs(false)">
               <span class="ico"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
               <span>一键联网搜索并三档推荐</span>
+            </button>
+            <button class="success" id="btn-more-discover" onclick="runDiscoverJobs(true)">
+              <span>+ 联网加一批（追加）</span>
             </button>
           </div>
         </div>
@@ -480,18 +483,20 @@
             </div>
             <span class="muted" id="disc-resume-hint"></span>
           </div>
+          <div id="disc-query-chips" class="row" style="margin-top:8px;"></div>
         </div>
 
         <div id="disc-status-bar" class="notice-box" style="display:none;"></div>
 
         <details id="disc-collab-box" class="section-box" style="margin-top:10px;">
           <summary style="cursor:pointer; font-weight:600; color:#1e3a8a;">模式 B 备用通道：零 API Key 且遇公开站频控时，复制脱敏指令让 AI 联网搜岗并一键导入三档卡片</summary>
-          <div class="muted" style="margin-top:6px;">不发送任何个人简历隐私，仅包含城市、通用职位关键词与目标月薪区间；把搜回的 JSON 粘贴到下方即可立刻生成三档推荐卡片。</div>
+          <div class="muted" style="margin-top:6px;">不发送任何个人简历隐私，仅包含城市、通用职位关键词与目标月薪区间；把搜回的 JSON 粘贴到下方即可立刻生成或追加到三档推荐卡片。</div>
           <div class="row" style="margin-top:8px;">
             <button onclick="copyDiscoverCollabPrompt()">复制脱敏联网搜岗指令</button>
-            <button class="primary" onclick="importDiscoverCollabJson()">导入 JSON 并生成三档推荐卡片</button>
+            <button class="primary" onclick="importDiscoverCollabJson(false)">导入 JSON 并生成三档卡片</button>
+            <button class="success" onclick="importDiscoverCollabJson(true)">导入并追加到当前三档</button>
           </div>
-          <textarea id="disc-collab-json" rows="4" style="margin-top:8px;" placeholder="把联网 AI 返回的岗位 JSON 数组粘贴到这里，点击上方「导入 JSON 并生成三档推荐卡片」"></textarea>
+          <textarea id="disc-collab-json" rows="4" style="margin-top:8px;" placeholder="把联网 AI 返回的岗位 JSON 数组粘贴到这里，点击上方「导入」或「追加」"></textarea>
         </details>
 
         <div id="disc-batch-bar" class="row between" style="display:none; margin-top:12px; padding:10px 14px; background:#eff6ff; border:1px solid #93c5fd; border-radius:10px;">
@@ -2783,6 +2788,68 @@ async function removeCurrentCareerPlan() {
 /* ===== 联网三档荐岗与一键采纳生成 ===== */
 let lastDiscoverData = null;
 const selectedDiscoverIds = new Set();
+let discoverCursor = { page: 1, queryIndex: 0 };
+const dismissedDiscoverKeys = new Set();
+
+function makeDiscoverKey(c) {
+  return `${String(c?.company || '').trim().toLowerCase()}|${String(c?.title || '').trim().toLowerCase()}`;
+}
+
+function getExcludedDiscoverKeys() {
+  const keys = new Set(dismissedDiscoverKeys);
+  for (const c of getAllDiscoveredList()) {
+    const k = makeDiscoverKey(c);
+    if (k !== '|') keys.add(k);
+  }
+  return [...keys];
+}
+
+function mergeDiscoverTiers(baseData, incomingData) {
+  if (!baseData || !baseData.tiers) return incomingData;
+  const existingKeys = new Set(getAllDiscoveredList().map(makeDiscoverKey));
+  const merged = {
+    ...incomingData,
+    tiers: {
+      practice: [...(baseData.tiers.practice || [])],
+      core: [...(baseData.tiers.core || [])],
+      stretch: [...(baseData.tiers.stretch || [])],
+    },
+    sourcesUsed: [...new Set([...(baseData.sourcesUsed || []), ...(incomingData.sourcesUsed || [])])],
+    warnings: [...new Set([...(baseData.warnings || []), ...(incomingData.warnings || [])])],
+  };
+  let added = 0;
+  for (const tId of ['practice', 'core', 'stretch']) {
+    for (const item of incomingData.tiers?.[tId] || []) {
+      const k = makeDiscoverKey(item);
+      if (existingKeys.has(k) || dismissedDiscoverKeys.has(k)) continue;
+      if (merged.tiers[tId].length >= 15) continue;
+      existingKeys.add(k);
+      merged.tiers[tId].push({ ...item, tier: tId, tier_label: TIER_LABELS[tId] });
+      added += 1;
+    }
+  }
+  merged.totalRecommended =
+    merged.tiers.practice.length + merged.tiers.core.length + merged.tiers.stretch.length;
+  merged._lastAdded = added;
+  return merged;
+}
+
+function renderDiscoverQueryChips(queryPool, activeQuery) {
+  const wrap = document.getElementById('disc-query-chips');
+  if (!wrap) return;
+  if (!Array.isArray(queryPool) || !queryPool.length) {
+    wrap.innerHTML = '';
+    return;
+  }
+  wrap.innerHTML =
+    '<span class="muted" style="font-size:12px;">快捷切词搜岗（点击即按该词重搜）：</span>' +
+    queryPool
+      .map((q, idx) => {
+        const isActive = q === activeQuery;
+        return `<button class="chip-filter ${isActive ? 'active' : ''}" onclick="runDiscoverJobs(false, ${idx})">${esc(q)}</button>`;
+      })
+      .join('');
+}
 
 function initDiscoverDefaults() {
   if (!appState) return;
@@ -2817,36 +2884,74 @@ async function updateJobTier(jobId, tier) {
   } catch (e) { toast(e.message); }
 }
 
-async function runDiscoverJobs() {
+async function runDiscoverJobs(appendMode = false, overrideQueryIndex = null) {
+  const isAppend = Boolean(appendMode && lastDiscoverData);
   const btn = document.getElementById('btn-run-discover');
+  const moreBtn = document.getElementById('btn-more-discover');
   const statusBar = document.getElementById('disc-status-bar');
   const keyword = document.getElementById('disc-kw').value.trim();
   const city = document.getElementById('disc-city').value.trim();
   const targetSalaryK = Number(document.getElementById('disc-salary').value) || 0;
 
+  if (!isAppend) {
+    discoverCursor = {
+      page: 1,
+      queryIndex: overrideQueryIndex !== null && overrideQueryIndex !== undefined ? Number(overrideQueryIndex) : 0,
+    };
+    dismissedDiscoverKeys.clear();
+    selectedDiscoverIds.clear();
+  }
+
   btn.disabled = true;
+  if (moreBtn) moreBtn.disabled = true;
   statusBar.style.display = 'block';
-  statusBar.innerHTML = '正在本机联网检索全网真实在招岗位，并结合你的主简历按「练手训练 / 主力匹配 / 进阶挑战」三档评分归类，请稍候 3~8 秒...';
+  statusBar.innerHTML = isAppend
+    ? '正在联网翻页 / 切词追加更多真实在招岗位，并自动去重分档，请稍候 3~8 秒...'
+    : '正在本机联网检索全网真实在招岗位，并结合你的主简历按「练手训练 / 主力匹配 / 进阶挑战」三档评分归类，请稍候 3~8 秒...';
 
   try {
     const res = await api('/api/jobs/recommend', {
       method: 'POST',
-      body: JSON.stringify({ keyword, city, targetSalaryK }),
+      body: JSON.stringify({
+        keyword,
+        city,
+        targetSalaryK,
+        page: discoverCursor.page,
+        queryIndex: discoverCursor.queryIndex,
+        perTierLimit: isAppend ? 8 : 6,
+        excludeKeys: isAppend ? getExcludedDiscoverKeys() : [],
+      }),
     });
-    lastDiscoverData = res;
-    selectedDiscoverIds.clear();
+
+    discoverCursor = {
+      page: res.nextPage || 1,
+      queryIndex: res.nextQueryIndex ?? 0,
+    };
+
+    lastDiscoverData = isAppend ? mergeDiscoverTiers(lastDiscoverData, res) : res;
     renderDiscoverResults();
-    if (res.totalRecommended === 0) {
+    renderDiscoverQueryChips(lastDiscoverData.queryPool || res.signals?.queryPool, res.activeQuery);
+
+    if (lastDiscoverData.totalRecommended === 0) {
       const box = document.getElementById('disc-collab-box');
       if (box) box.open = true;
     }
-    statusBar.innerHTML = `联网检索完成：围绕 <strong>${esc(res.signals.city)} · ${esc(res.signals.primaryKeyword)}</strong>（高命中短词：${esc((res.signals.queries || []).join(' / '))}，基准 ${res.signals.targetSalaryK}K）共抓取 ${res.totalFound} 个真实在招岗位，精选出 <strong>${res.totalRecommended}</strong> 个三档推荐岗位。${res.warnings?.length ? `<div style="margin-top:4px; color:#92400e;">提示：${res.warnings.map(esc).join('；')}</div>` : ''}`;
-    toast(res.totalRecommended > 0 ? `已联网推荐 ${res.totalRecommended} 个三档岗位` : '公开源暂受频控限制，已展开模式 B 联网搜岗备用通道');
+
+    const addedMsg = isAppend ? `本次新追加 <strong>${lastDiscoverData._lastAdded || 0}</strong> 个不重复岗位，` : '';
+    statusBar.innerHTML = `联网检索完成：围绕 <strong>${esc(res.signals.city)} · ${esc(res.activeQuery || res.signals.primaryKeyword)}</strong>（第 ${res.page || 1} 页，基准 ${res.signals.targetSalaryK}K），${addedMsg}当前三档池共 <strong>${lastDiscoverData.totalRecommended}</strong> 个推荐岗位。${res.warnings?.length ? `<div style="margin-top:4px; color:#92400e;">提示：${res.warnings.map(esc).join('；')}</div>` : ''}`;
+    toast(
+      isAppend
+        ? (lastDiscoverData._lastAdded > 0 ? `已追加 ${lastDiscoverData._lastAdded} 个新岗位！` : '当前批次暂无更多不重复岗位，可再点一次切下一个相关词或用模式 B 补充')
+        : res.totalRecommended > 0
+          ? `已联网推荐 ${res.totalRecommended} 个三档岗位`
+          : '公开源暂受频控限制，已展开模式 B 联网搜岗备用通道'
+    );
   } catch (e) {
     statusBar.innerHTML = `<span style="color:#b91c1c;">联网搜岗失败：${esc(e.message)}</span>`;
     toast('联网搜岗失败：' + e.message);
   } finally {
     btn.disabled = false;
+    if (moreBtn) moreBtn.disabled = false;
   }
 }
 
@@ -2854,7 +2959,7 @@ async function copyDiscoverCollabPrompt() {
   const kw = document.getElementById('disc-kw').value.trim() || lastDiscoverData?.signals?.primaryKeyword || (appState?.masterResume?.headline || '产品经理').split(/[\/｜|]/)[0].trim();
   const city = document.getElementById('disc-city').value.trim() || lastDiscoverData?.signals?.city || '上海';
   const sal = Number(document.getElementById('disc-salary').value) || lastDiscoverData?.signals?.targetSalaryK || 18;
-  const prompt = lastDiscoverData?.collabPrompt || `请使用联网搜索查找「${city}」当前真实在招的「${kw}」岗位（目标月薪 ${sal}K 左右），按练手训练、主力匹配、进阶挑战各找 3 个共 9 个真实岗位，只输出纯 JSON 数组：[{"company":"公司名","title":"岗位名","city":"${city}","salary":"薪资","experience":"经验","education":"学历","platform":"来源平台","url":"岗位链接","jd_text":"岗位核心职责与要求摘要"}]`;
+  const prompt = lastDiscoverData?.collabPrompt || `请使用联网搜索查找「${city}」当前真实在招的「${kw}」岗位（目标月薪 ${sal}K 左右），按练手训练、主力匹配、进阶挑战各找 4 个共 12 个真实岗位，只输出纯 JSON 数组：[{"company":"公司名","title":"岗位名","city":"${city}","salary":"薪资","experience":"经验","education":"学历","platform":"来源平台","url":"岗位链接","jd_text":"岗位核心职责与要求摘要"}]`;
   try {
     await navigator.clipboard.writeText(prompt);
     toast('脱敏联网搜岗指令已复制！发给任意联网 AI 后将 JSON 粘贴回来即可');
@@ -2863,7 +2968,8 @@ async function copyDiscoverCollabPrompt() {
   }
 }
 
-async function importDiscoverCollabJson() {
+async function importDiscoverCollabJson(appendMode = false) {
+  const isAppend = Boolean(appendMode && lastDiscoverData);
   const raw = document.getElementById('disc-collab-json').value.trim();
   if (!raw) return toast('请先粘贴联网搜岗返回的 JSON 数组');
   try {
@@ -2874,15 +2980,23 @@ async function importDiscoverCollabJson() {
         keyword: document.getElementById('disc-kw').value.trim(),
         city: document.getElementById('disc-city').value.trim(),
         targetSalaryK: Number(document.getElementById('disc-salary').value) || 0,
+        perTierLimit: 12,
+        excludeKeys: isAppend ? getExcludedDiscoverKeys() : [],
       }),
     });
-    lastDiscoverData = res;
-    selectedDiscoverIds.clear();
+    if (!isAppend) {
+      dismissedDiscoverKeys.clear();
+      selectedDiscoverIds.clear();
+    }
+    lastDiscoverData = isAppend ? mergeDiscoverTiers(lastDiscoverData, res) : res;
     renderDiscoverResults();
+    renderDiscoverQueryChips(res.signals?.queryPool, res.signals?.primaryKeyword);
     const statusBar = document.getElementById('disc-status-bar');
     statusBar.style.display = 'block';
-    statusBar.innerHTML = `模式 B 导入成功：已自动完成三档评分分类，共生成 <strong>${res.totalRecommended}</strong> 个推荐岗位卡片。勾选即可一键生成专属简历与 3 套打招呼话术！`;
-    toast(`已导入并自动分类 ${res.totalRecommended} 个三档推荐岗位！`);
+    statusBar.innerHTML = isAppend
+      ? `模式 B 追加成功：新纳入 <strong>${lastDiscoverData._lastAdded || 0}</strong> 个岗位，当前三档推荐池共 <strong>${lastDiscoverData.totalRecommended}</strong> 个岗位。`
+      : `模式 B 导入成功：已自动完成三档评分分类，共生成 <strong>${res.totalRecommended}</strong> 个推荐岗位卡片。勾选或调档后即可一键生成专属简历与 3 套打招呼话术！`;
+    toast(isAppend ? `已追加 ${lastDiscoverData._lastAdded || 0} 个岗位到三档推荐池！` : `已导入并自动分类 ${res.totalRecommended} 个三档推荐岗位！`);
   } catch (e) {
     toast('导入失败：' + e.message);
   }
@@ -2895,6 +3009,46 @@ function getAllDiscoveredList() {
     ...(lastDiscoverData.tiers.core || []),
     ...(lastDiscoverData.tiers.stretch || []),
   ];
+}
+
+function moveDiscoveredJobTier(candId, newTier) {
+  if (!lastDiscoverData?.tiers || !['practice', 'core', 'stretch'].includes(newTier)) return;
+  let moved = null;
+  for (const tId of ['practice', 'core', 'stretch']) {
+    const idx = (lastDiscoverData.tiers[tId] || []).findIndex((c) => c.id === candId);
+    if (idx >= 0) {
+      moved = lastDiscoverData.tiers[tId].splice(idx, 1)[0];
+      break;
+    }
+  }
+  if (!moved) return;
+  moved.tier = newTier;
+  moved.tier_label = TIER_LABELS[newTier] || newTier;
+  lastDiscoverData.tiers[newTier].unshift(moved);
+  lastDiscoverData.totalRecommended =
+    lastDiscoverData.tiers.practice.length + lastDiscoverData.tiers.core.length + lastDiscoverData.tiers.stretch.length;
+  renderDiscoverResults();
+  toast(`已调整至「${TIER_LABELS[newTier]}」`);
+}
+
+function removeDiscoveredJob(candId) {
+  if (!lastDiscoverData?.tiers) return;
+  let removed = null;
+  for (const tId of ['practice', 'core', 'stretch']) {
+    const idx = (lastDiscoverData.tiers[tId] || []).findIndex((c) => c.id === candId);
+    if (idx >= 0) {
+      removed = lastDiscoverData.tiers[tId].splice(idx, 1)[0];
+      break;
+    }
+  }
+  if (!removed) return;
+  selectedDiscoverIds.delete(candId);
+  const k = makeDiscoverKey(removed);
+  if (k !== '|') dismissedDiscoverKeys.add(k);
+  lastDiscoverData.totalRecommended =
+    lastDiscoverData.tiers.practice.length + lastDiscoverData.tiers.core.length + lastDiscoverData.tiers.stretch.length;
+  renderDiscoverResults();
+  toast(`已移除「${removed.company} · ${removed.title}」`);
 }
 
 function toggleDiscoverSelect(candId, checked) {
@@ -2929,7 +3083,7 @@ function renderDiscoverResults() {
   const wrap = document.getElementById('disc-results-wrap');
   updateDiscoverBatchBar();
   if (!lastDiscoverData || lastDiscoverData.totalRecommended === 0) {
-    wrap.innerHTML = '<div class="muted" style="text-align:center; padding:36px 0;">未检索到匹配的在招岗位，请尝试放宽关键词（如只填核心职位词）或把城市改为「全国」后重试。</div>';
+    wrap.innerHTML = '<div class="muted" style="text-align:center; padding:36px 0;">未检索到匹配的在招岗位，请尝试点击「+ 联网加一批」、切换快捷词、把城市改为「全国」或展开上方「模式 B」导入岗位。</div>';
     return;
   }
 
@@ -2970,12 +3124,20 @@ function renderDiscoverResults() {
               <div style="font-size:12.5px; color:#1e293b; margin-top:8px; line-height:1.5;">${esc(c.tier_reason)}</div>
               <div style="font-size:12px; color:#475569; margin-top:4px; background:#f8fafc; padding:6px 8px; border-radius:6px;">${esc(c.breakthrough_tip)}</div>
               ${(c.risk_flags || []).length ? `<div class="row" style="margin-top:6px;">${c.risk_flags.map((r) => `<span class="pill warn">${esc(r)}</span>`).join('')}</div>` : ''}
-              <div class="row between" style="margin-top:10px; padding-top:8px; border-top:1px dashed #e2e8f0;">
-                ${c.url ? `<a href="${escAttr(c.url)}" target="_blank" rel="noopener noreferrer" style="font-size:12.5px; color:#2563eb; text-decoration:none;">查看原帖</a>` : '<span></span>'}
+              <div class="row between" style="margin-top:10px; padding-top:8px; border-top:1px dashed #e2e8f0; gap:6px;">
+                <div class="row" style="gap:6px;">
+                  <select aria-label="调整档位" style="width:auto; padding:4px 6px; font-size:12px;" onchange="moveDiscoveredJobTier('${escAttr(c.id)}', this.value)">
+                    <option value="practice" ${tierId === 'practice' ? 'selected' : ''}>练手训练</option>
+                    <option value="core" ${tierId === 'core' ? 'selected' : ''}>主力匹配</option>
+                    <option value="stretch" ${tierId === 'stretch' ? 'selected' : ''}>进阶挑战</option>
+                  </select>
+                  <button class="danger" style="padding:4px 8px; font-size:12px;" onclick="removeDiscoveredJob('${escAttr(c.id)}')">移除</button>
+                  ${c.url ? `<a href="${escAttr(c.url)}" target="_blank" rel="noopener noreferrer" style="font-size:12px; color:#2563eb; text-decoration:none;">原帖</a>` : ''}
+                </div>
                 <button class="primary" onclick="adoptSingleDiscoveredJob('${escAttr(c.id)}')">加入并生成简历与话术</button>
               </div>
             </div>
-          `).join('') : '<div class="muted" style="text-align:center; padding:20px 0;">本档暂无推荐岗位</div>'}
+          `).join('') : '<div class="muted" style="text-align:center; padding:20px 0;">本档暂无推荐岗位，可点顶部「+ 联网加一批」或从其他档调入</div>'}
         </div>
       </div>
     `;
