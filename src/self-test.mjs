@@ -527,6 +527,7 @@ try {
     assert.ok(Array.isArray(item.job.greetings) && item.job.greetings.length === 3, '未自动生成 3 套打招呼话术');
     assert.ok(item.job.selected_greeting.length > 20, '未自动填入默认打招呼话术');
     assert.ok(item.job.resume_pdf_path && fs.existsSync(item.job.resume_pdf_path), '未自动渲染专属 PDF 简历');
+    assert.ok(!path.basename(item.job.resume_pdf_path).includes(item.job.company), 'PDF 文件名不应包含目标公司/品牌名称');
   }
   console.log('[PASS] 9. 三档精准推荐分类与一键采纳自动生成专属简历、3套话术及PDF验证通过');
 

@@ -154,22 +154,22 @@ export function renderResumeHtml(job) {
 <meta charset="UTF-8" />
 <title>${escapeHtml(profile.name || '个人简历')} - ${escapeHtml(job?.title || resume.headline || '')}</title>
 <style>
-  @page { size: A4; margin: 11mm 13mm; }
+  @page { size: A4; margin: 9.5mm 12mm; }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     padding: 0;
     font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
     color: #1f2937;
-    font-size: 9.8pt;
-    line-height: 1.48;
+    font-size: 9.5pt;
+    line-height: 1.44;
     background: #ffffff;
   }
   .page { max-width: 780px; margin: 0 auto; }
   header {
-    border-bottom: 1.8px solid #1e3a8a;
-    padding-bottom: 8px;
-    margin-bottom: 11px;
+    border-bottom: 1.8px solid #4a3728;
+    padding-bottom: 7px;
+    margin-bottom: 9px;
   }
   .name-row {
     display: flex;
@@ -177,45 +177,45 @@ export function renderResumeHtml(job) {
     align-items: baseline;
     gap: 12px;
   }
-  h1 { margin: 0; font-size: 19pt; color: #111827; letter-spacing: 1px; }
-  .headline { font-size: 10.8pt; font-weight: 600; color: #1e40af; text-align: right; }
+  h1 { margin: 0; font-size: 18pt; color: #111827; letter-spacing: 1px; }
+  .headline { font-size: 10.6pt; font-weight: 600; color: #6b4c3b; text-align: right; }
   .basic-info {
-    margin-top: 4px;
+    margin-top: 3.5px;
     font-size: 9.2pt;
     color: #374151;
   }
   .contacts {
-    margin-top: 4px;
+    margin-top: 3.5px;
     display: flex;
     flex-wrap: wrap;
     gap: 4px 16px;
     font-size: 9pt;
     color: #4b5563;
   }
-  section { margin-bottom: 10px; }
+  section { margin-bottom: 8px; }
   h2 {
-    margin: 0 0 6px 0;
-    font-size: 10.8pt;
+    margin: 0 0 5px 0;
+    font-size: 10.6pt;
     color: #111827;
-    border-bottom: 1px solid #cbd5e1;
-    padding-bottom: 3px;
+    border-bottom: 1px solid #dfd5cc;
+    padding-bottom: 2.5px;
     letter-spacing: 0.5px;
   }
   .summary { margin: 0; color: #374151; }
   .summary-list { margin: 0; padding-left: 16px; }
-  .summary-list li { margin-bottom: 2.5px; }
+  .summary-list li { margin-bottom: 2px; }
   .skills { display: flex; flex-wrap: wrap; gap: 5px; }
   .skill-chip {
-    background: #eff6ff;
-    color: #1e40af;
-    border: 1px solid #dbeafe;
+    background: #f8f4f0;
+    color: #5c4033;
+    border: 1px solid #e6dbd0;
     border-radius: 4px;
     padding: 1.5px 7px;
     font-size: 9pt;
   }
-  .skill-rows { display: flex; flex-direction: column; gap: 2.5px; font-size: 9.3pt; }
+  .skill-rows { display: flex; flex-direction: column; gap: 2px; font-size: 9.2pt; }
   .skill-cat { font-weight: 700; color: #111827; }
-  .entry { margin-bottom: 8px; }
+  .entry { margin-bottom: 6.5px; }
   .entry-head {
     display: flex;
     justify-content: space-between;
@@ -223,27 +223,27 @@ export function renderResumeHtml(job) {
     gap: 12px;
     margin-bottom: 2px;
   }
-  .entry-title { font-weight: 700; color: #111827; font-size: 10.2pt; }
+  .entry-title { font-weight: 700; color: #111827; font-size: 10pt; }
   .entry-period { color: #6b7280; font-size: 9pt; white-space: nowrap; }
   .subprojects {
-    margin-top: 5px;
+    margin-top: 4px;
     margin-left: 6px;
     padding-left: 10px;
-    border-left: 2px solid #dbeafe;
+    border-left: 2px solid #dfd3c8;
   }
-  .subproject { margin-bottom: 6px; page-break-inside: avoid; }
+  .subproject { margin-bottom: 4.5px; page-break-inside: avoid; }
   .subproject:last-child { margin-bottom: 0; }
   .sub-head {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     gap: 10px;
-    margin-bottom: 2px;
+    margin-bottom: 1.5px;
   }
-  .sub-title { font-weight: 700; color: #1e3a8a; font-size: 9.8pt; }
-  .sub-role { font-weight: 500; color: #4b5563; margin-left: 6px; font-size: 9.2pt; }
+  .sub-title { font-weight: 700; color: #4a3728; font-size: 9.6pt; }
+  .sub-role { font-weight: 500; color: #4b5563; margin-left: 6px; font-size: 9pt; }
   ul { margin: 2px 0 0 0; padding-left: 16px; }
-  li { margin-bottom: 2px; }
+  li { margin-bottom: 1.5px; }
   .edu-row { margin-bottom: 3px; }
 </style>
 </head>
@@ -264,6 +264,31 @@ export function renderResumeHtml(job) {
     ${skillsBlock ? `<section><h2>核心能力</h2>${skillsBlock}</section>` : ''}
     ${educationHtml ? `<section><h2>教育背景</h2>${educationHtml}</section>` : ''}
   </div>
+  <script>
+    (function fitOnePage() {
+      const page = document.querySelector('.page');
+      if (!page) return;
+      const maxH = 1020;
+      if (page.scrollHeight <= maxH) return;
+      const presets = [
+        { fs: '9.2pt', lh: '1.40', sec: '7px', ent: '5.5px' },
+        { fs: '8.9pt', lh: '1.36', sec: '6px', ent: '5px' },
+        { fs: '8.6pt', lh: '1.34', sec: '5.5px', ent: '4.5px' },
+        { fs: '8.5pt', lh: '1.32', sec: '5px', ent: '4px' }
+      ];
+      for (const p of presets) {
+        document.body.style.fontSize = p.fs;
+        document.body.style.lineHeight = p.lh;
+        document.querySelectorAll('section').forEach((el) => { el.style.marginBottom = p.sec; });
+        document.querySelectorAll('.entry').forEach((el) => { el.style.marginBottom = p.ent; });
+        if (page.scrollHeight <= maxH) return;
+      }
+      if (page.scrollHeight > maxH) {
+        const scale = Math.max(0.86, Math.min(0.99, (maxH - 8) / page.scrollHeight));
+        page.style.zoom = String(Number(scale.toFixed(3)));
+      }
+    })();
+  </script>
 </body>
 </html>`;
 }
@@ -281,9 +306,15 @@ export function generateJobResumePdf(jobId) {
     throw new Error('未检测到 Chrome 或 Edge 浏览器，无法离线生成 PDF。');
   }
 
-  const baseName = `job_${job.id}_${sanitizeFileName(job.company)}_${sanitizeFileName(job.title)}`;
-  const htmlPath = path.join(PATHS.resumesDir, `${baseName}.html`);
-  const pdfPath = path.join(PATHS.resumesDir, `${baseName}.pdf`);
+  const profile = loadPrivateProfile();
+  const candidateName = !isPlaceholderContact(profile.name) ? sanitizeFileName(profile.name) : '个人简历';
+  const cleanTitle = sanitizeFileName(job.title || '求职简历');
+  const jobDir = path.join(PATHS.resumesDir, `job_${job.id}`);
+  fs.mkdirSync(jobDir, { recursive: true });
+
+  const baseName = `${candidateName}_${cleanTitle}`;
+  const htmlPath = path.join(jobDir, `${baseName}.html`);
+  const pdfPath = path.join(jobDir, `${baseName}.pdf`);
 
   const html = renderResumeHtml(job);
   fs.writeFileSync(htmlPath, html, 'utf8');

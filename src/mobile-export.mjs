@@ -1911,9 +1911,9 @@ function buildOfflineTailoredResumeHtml(job) {
     const tr = job.tailored_resume;
     return \`
       <div style="font-size:14.5px; line-height:1.65;">
-        <div style="border-bottom:2px solid #1e3a8a; padding-bottom:10px; margin-bottom:12px;">
+        <div style="border-bottom:2px solid #4a3728; padding-bottom:10px; margin-bottom:12px;">
           <div style="font-size:20px; font-weight:800;">\${esc(state.mobileResume?.name || '个人定制简历')}</div>
-          <div style="color:#1e40af; font-weight:700; margin-top:2px;">\${esc(tr.headline || job.title)}</div>
+          <div style="color:#6b4c3b; font-weight:700; margin-top:2px;">\${esc(tr.headline || job.title)}</div>
           \${tr.basicInfo ? \`<div class="muted">\${esc(tr.basicInfo)}</div>\` : ''}
           \${state.mobileResume?.contact ? \`<div class="muted">\${esc(state.mobileResume.contact)}</div>\` : ''}
         </div>
@@ -1951,9 +1951,9 @@ function buildOfflineTailoredResumeHtml(job) {
         \${state.mobileApi?.apiKey && job.id !== 'master' ? \`<div style="margin-top:8px;"><button class="primary sm-btn" onclick="aiTailorResumeOnMobile('\${escAttr(job.id)}')">\${ico('sparkles', 15)}<span>用我配置的官方 API 联网深度改写</span></button></div>\` : '<div class="muted" style="margin-top:4px;">提示：在「谈薪与设置」填入 DeepSeek/Gemini 官方 Key，还可在浏览器直接联网深度改写。</div>'}
       </div>
       <div id="printable-resume" style="border:1px solid #cbd5e1; padding:16px; border-radius:10px; background:#fff;">
-        <div style="border-bottom:2px solid #1e3a8a; padding-bottom:10px; margin-bottom:12px;">
+        <div style="border-bottom:2px solid #4a3728; padding-bottom:10px; margin-bottom:12px;">
           <div style="font-size:20px; font-weight:800;">\${esc(r.name || '求职者（请点击顶部「我的简历底稿」填写称呼）')}</div>
-          <div style="color:#1e40af; font-weight:700; margin-top:2px;">求职意向：\${esc(job.title)} · \${esc(tpl.greetingFocus.split('、')[0])}</div>
+          <div style="color:#6b4c3b; font-weight:700; margin-top:2px;">求职意向：\${esc(job.title)} · \${esc(tpl.greetingFocus.split('、')[0])}</div>
           \${r.basic ? \`<div class="muted">\${esc(r.basic)}</div>\` : ''}
           \${r.contact ? \`<div class="muted">\${esc(r.contact)}</div>\` : ''}
         </div>
