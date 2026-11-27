@@ -676,6 +676,7 @@
                 <div class="field">
                   <label>当前沟通场景</label>
                   <select id="chat-scenario">
+                    <option value="自动识别">自动识别 HR 意图（推荐）</option>
                     <option value="核实双休与福利">核实双休、加班与五险一金</option>
                     <option value="薪资试探与报价">HR 试探期望薪资 / 报价博弈</option>
                     <option value="应对压薪或试用期打折">应对压薪 / 试用期打八折 / 高画饼低底薪</option>
@@ -1347,7 +1348,39 @@ function renderJobDetail() {
     </div>
 
     <div class="section-box">
-      <h3>4. 沟通记录 / 面试复盘备注</h3>
+      <div class="row between">
+        <h3>4. HR 回复了我 → 结合简历一键生成回复</h3>
+        <button onclick="openJobInCoachChat(${job.id})">去完整谈薪与协作页</button>
+      </div>
+      <div class="grid-2" style="margin-top:8px;">
+        <div class="field" style="margin-bottom:6px;">
+          <label>沟通场景（推荐自动识别）</label>
+          <select id="detail-hr-scene">
+            <option value="自动识别">自动识别 HR 意图（推荐）</option>
+            <option value="核实双休与福利">核实双休、加班与五险一金</option>
+            <option value="薪资试探与报价">HR 试探期望薪资 / 报价博弈</option>
+            <option value="应对压薪或试用期打折">应对压薪 / 试用期打折</option>
+            <option value="回应空窗期或离职原因">回应空窗休整期 / 离职原因</option>
+            <option value="回应学历或跨类目追问">回应学历 / 跨行业背景追问</option>
+            <option value="推进约面或体面婉拒">锁定约面时间 / 体面婉拒</option>
+          </select>
+        </div>
+        <div class="field" style="margin-bottom:6px;">
+          <label>一键生成回复</label>
+          <div class="row">
+            <button class="primary" onclick="quickReplyFromJobDetail(${job.id}, 'quick')">0 秒结合简历生成 3 套回复</button>
+            <button onclick="quickReplyFromJobDetail(${job.id}, 'api')">模式 A：API 定制</button>
+          </div>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:4px;">
+        <textarea id="detail-hr-msg" rows="3" placeholder="直接粘贴 HR / 面试官刚才发给你的原话，例如：我们底薪16K绩效4K，偶尔大小周能接受吗？方便的话发份简历看看？"></textarea>
+      </div>
+      <div id="detail-hr-output" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="section-box">
+      <h3>5. 沟通记录 / 面试复盘备注</h3>
       <div class="field">
         <textarea id="notes-editor" rows="3" placeholder="记录 HR 反馈、面试问题、卡壳点，方便后续复盘">${esc(job.notes || '')}</textarea>
       </div>
@@ -1983,6 +2016,80 @@ async function saveNotes(jobId) {
   await api(`/api/jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify({ notes }) });
   toast('备注已保存');
   await refreshState();
+}
+
+async function quickReplyFromJobDetail(jobId, mode = 'quick') {
+  const scenario = document.getElementById('detail-hr-scene')?.value || '自动识别';
+  const hrMessage = document.getElementById('detail-hr-msg')?.value.trim() || '';
+  const out = document.getElementById('detail-hr-output');
+  if (mode === 'api' && !hrMessage) {
+    return toast('模式 A 深度定制请先粘贴 HR 或面试官发来的原话');
+  }
+  if (out) out.innerHTML = '<div class="muted">正在识别意图并结合主简历生成回复...</div>';
+  try {
+    const res = await api(`/api/jobs/${jobId}/chat-reply`, {
+      method: 'POST',
+      body: JSON.stringify({ mode, scenario, hrMessage }),
+    });
+    const replies = res.replies || [];
+    const sceneBadge = res.detectedScenario || res.scenario || scenario;
+    if (out) {
+      out.innerHTML = `
+        <div class="notice-box" style="margin-bottom:8px;">
+          <strong>识别意图：${esc(sceneBadge)}</strong>
+          ${res.usedResume ? '<span class="pill score-high" style="margin-left:6px;">已融合主简历真实成果</span>' : ''}
+          ${res.analysis ? `<div style="margin-top:4px;">${esc(res.analysis)}</div>` : ''}
+        </div>
+        ${replies
+          .map(
+            (r, idx) => `
+          <div class="reply-card">
+            <div class="row between" style="margin-bottom:6px;">
+              <strong>方案 ${idx + 1}：${esc(r.style)}</strong>
+              <div class="row">
+                <button onclick="copyPlainText(this.dataset.text)" data-text="${escAttr(r.text)}">复制话术</button>
+                <button onclick="appendReplyToJobNotes(${jobId}, this.dataset.hr, this.dataset.text)" data-hr="${escAttr(hrMessage)}" data-text="${escAttr(r.text)}">写入备注</button>
+              </div>
+            </div>
+            <div style="white-space:pre-wrap;">${esc(r.text)}</div>
+          </div>`
+          )
+          .join('')}
+      `;
+    }
+    toast('已结合简历生成 3 套回复，可直接复制发送！');
+  } catch (e) {
+    if (out) out.innerHTML = '';
+    toast('生成失败：' + e.message);
+  }
+}
+
+async function appendReplyToJobNotes(jobId, hrText, replyText) {
+  const ed = document.getElementById('notes-editor');
+  if (!ed) return;
+  const stamp = new Date().toLocaleString('zh-CN', { hour12: false });
+  const entry = [
+    `[${stamp}]`,
+    hrText ? `HR：${hrText}` : '',
+    `拟回复：${replyText}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  ed.value = (ed.value ? ed.value.trim() + '\n\n' : '') + entry;
+  await saveNotes(jobId);
+}
+
+function openJobInCoachChat(jobId) {
+  const msg = document.getElementById('detail-hr-msg')?.value || '';
+  const scene = document.getElementById('detail-hr-scene')?.value || '自动识别';
+  selectedJobId = jobId;
+  coachJobId = jobId;
+  switchTopTab('coach');
+  switchCoachSubtab('chat');
+  const chatInput = document.getElementById('chat-hr-message');
+  if (chatInput && msg) chatInput.value = msg;
+  const chatScene = document.getElementById('chat-scenario');
+  if (chatScene && [...chatScene.options].some((o) => o.value === scene)) chatScene.value = scene;
 }
 
 async function removeJob(jobId) {

@@ -464,15 +464,33 @@ ${!isPersonal ? '<link rel="manifest" href="./manifest.webmanifest" />' : ''}
       <div id="m-career-body"></div>
     </div>
 
-    <!-- 4. HR 聊天神回复 -->
+    <!-- 4. HR 聊天智能回复（结合简历底稿 · 电脑/手机通用） -->
     <div id="p-chat" class="panel">
       <div class="card">
-        <h2>${svgTag('message', 19)}<span>HR 聊天神回复（全行业通用 · 秒复制）</span></h2>
-        <div class="field">
-          <label>当前沟通场景</label>
-          <select id="m-chat-scene" onchange="renderChatBank()"></select>
+        <h2>${svgTag('message', 19)}<span>HR 消息智能回复（结合我的简历底稿 · 秒复制）</span></h2>
+        <div class="muted" style="margin-bottom:10px;">直接粘贴 Boss直聘 / 猎聘 上 HR 发来的消息，系统会自动识别意图并结合你填好的「我的简历底稿」与目标岗位生成 3 套回复。</div>
+        <div class="row">
+          <div class="field" style="flex:1; min-width:160px;">
+            <label>关联目标岗位（选填，让回复贴合该岗位）</label>
+            <select id="m-chat-job" onchange="onMobileChatContextChange()">
+              <option value="">不绑定具体岗位（通用回复）</option>
+            </select>
+          </div>
+          <div class="field" style="flex:1; min-width:160px;">
+            <label>沟通场景（推荐自动识别 HR 意图）</label>
+            <select id="m-chat-scene" onchange="onMobileChatContextChange()"></select>
+          </div>
         </div>
-        <div class="muted">覆盖核实双休、薪资试探、压薪/试用期打折、空窗/离职、学历/跨行回应、约面与婉拒。</div>
+        <div class="field">
+          <label>粘贴 HR / 用人单位发来的原话（留空也可按下方场景直接出模板）</label>
+          <textarea id="m-chat-hr-msg" rows="3" placeholder="例如：我们底薪15K绩效5K，偶尔大小周能接受吗？方便的话发份简历看看？"></textarea>
+        </div>
+        <div class="row">
+          <button class="primary" style="flex:1; min-width:170px;" onclick="generateMobileSmartChatReply(false)">${svgTag('sparkles', 16)}<span>结合简历 0 秒生成 3 套回复</span></button>
+          <button class="success" style="flex:1; min-width:155px;" id="btn-m-chat-ai" onclick="generateMobileSmartChatReply(true)">${svgTag('zap', 16)}<span>用已配 AI 深度定制</span></button>
+          <button class="sm-btn" onclick="copyMobileChatCollabPrompt()">${svgTag('copy', 15)}<span>复制脱敏指令给外部 AI</span></button>
+        </div>
+        <div id="m-chat-analysis" class="box" style="display:none; background:#eff6ff; border-color:#bfdbfe; color:#1e3a8a;"></div>
       </div>
       <div id="m-chat-replies"></div>
     </div>
@@ -1195,7 +1213,10 @@ function initSelectors() {
   }
 
   const scenes = Object.keys(DATA.quickChatBank || {});
-  document.getElementById('m-chat-scene').innerHTML = scenes.map((s) => \`<option value="\${escAttr(s)}">\${esc(s)}</option>\`).join('');
+  document.getElementById('m-chat-scene').innerHTML =
+    '<option value="自动识别">自动识别 HR 意图（推荐）</option>' +
+    scenes.map((s) => \`<option value="\${escAttr(s)}">\${esc(s)}</option>\`).join('');
+  if (typeof refreshChatJobSelect === 'function') refreshChatJobSelect();
 
   // 初始化简历底稿表单
   const r = state.mobileResume || (DATA.masterResume ? {
@@ -1766,14 +1787,17 @@ function refreshPrepJobSelect() {
   const all = getAllJobs();
   const wrap = document.getElementById('m-prep-job-wrap');
   const sel = document.getElementById('m-prep-job');
-  if (!all.length) {
-    wrap.style.display = 'none';
-    return;
+  if (wrap && sel) {
+    if (!all.length) {
+      wrap.style.display = 'none';
+    } else {
+      wrap.style.display = 'block';
+      sel.innerHTML =
+        all.map((j) => \`<option value="\${escAttr(j.id)}">\${esc(j.company)} · \${esc(j.title)} (\${(j.prep?.questions || []).length ? (j.prep.questions.length + '定制题') : '匹配15+行业题'})</option>\`).join('') +
+        '<option value="">仅浏览下方 13 大行业全量模板题库</option>';
+    }
   }
-  wrap.style.display = 'block';
-  sel.innerHTML =
-    all.map((j) => \`<option value="\${escAttr(j.id)}">\${esc(j.company)} · \${esc(j.title)} (\${(j.prep?.questions || []).length ? (j.prep.questions.length + '定制题') : '匹配15+行业题'})</option>\`).join('') +
-    '<option value="">仅浏览下方 13 大行业全量模板题库</option>';
+  if (typeof refreshChatJobSelect === 'function') refreshChatJobSelect();
 }
 
 function onPrepJobChange() {
@@ -2037,6 +2061,7 @@ function renderJobs() {
         <div class="row" style="margin-top:12px;">
           <button class="primary" style="flex:1;" onclick="openTailoredResumeModal('\${escAttr(j.id)}')">\${ico('fileText', 16)}<span>适配简历</span></button>
           <button style="flex:1;" onclick="jumpToJobPrep('\${escAttr(j.id)}', '\${escAttr(tpl.id)}', 'prep')">\${ico('target', 16)}<span>刷本岗题库</span></button>
+          <button onclick="jumpToJobChatReply('\${escAttr(j.id)}')">\${ico('message', 16)}<span>回 HR 消息</span></button>
           <button onclick="jumpToJobPrep('\${escAttr(j.id)}', '\${escAttr(tpl.id)}', 'salary')">\${ico('wallet', 16)}<span>谈薪</span></button>
         </div>
         \${greetingsHtml}
@@ -2146,10 +2171,190 @@ function renderPrep() {
   \`).join('');
 }
 
-function renderChatBank() {
-  const sc = document.getElementById('m-chat-scene').value;
-  const list = DATA.quickChatBank[sc] || [];
-  document.getElementById('m-chat-replies').innerHTML = list.map((r, i) => \`
+function refreshChatJobSelect() {
+  const sel = document.getElementById('m-chat-job');
+  if (!sel) return;
+  const prev = sel.value;
+  const all = getAllJobs();
+  sel.innerHTML =
+    '<option value="">不绑定具体岗位（通用回复）</option>' +
+    all.map((j) => \`<option value="\${escAttr(j.id)}">\${esc(j.company)} · \${esc(j.title)}（\${esc(j.salary || '面议')}）</option>\`).join('');
+  if (prev && [...sel.options].some((o) => o.value === prev)) {
+    sel.value = prev;
+  } else if (all.length && !prev) {
+    sel.value = String(all[0].id);
+  }
+}
+
+function jumpToJobChatReply(jobId) {
+  refreshChatJobSelect();
+  const sel = document.getElementById('m-chat-job');
+  if (sel && [...sel.options].some((o) => o.value === String(jobId))) {
+    sel.value = String(jobId);
+  }
+  goTab('chat');
+  const inp = document.getElementById('m-chat-hr-msg');
+  if (inp) inp.focus();
+  onMobileChatContextChange();
+  toast('已切换到该岗位！粘贴 HR 发来的消息点生成即可');
+}
+
+function detectMobileChatScenario(hrMsg, selectedScene) {
+  if (selectedScene && selectedScene !== '自动识别') return selectedScene;
+  const msg = String(hrMsg || '').trim();
+  if (!msg) return '薪资试探与报价';
+  if (/大小周|双休|单休|加班|作息|五险一金|几点下班|工时/.test(msg)) return '核实双休与福利';
+  if (/打折|打八折|试用期|降薪|预算有限|压薪|给不到|底薪.*低|高提成|高绩效|浮动/.test(msg)) return '应对压薪或试用期打折';
+  if (/期望.*薪|薪资|报价|多少[kK千]|月薪|年薪|税前|目前薪|上家薪/.test(msg)) return '薪资试探与报价';
+  if (/空窗|离职|为什么离开|为什么走|这段时间|没工作|gap|待业/.test(msg)) return '回应空窗期或离职原因';
+  if (/学历|大专|专科|本科|跨行|类目|行业|没做过|经验匹配/.test(msg)) return '回应学历或跨类目追问';
+  if (/约.*面|面试|方便聊|发.*简历|微信|电话|什么时候到岗|合适吗/.test(msg)) return '推进约面或体面婉拒';
+  return '薪资试探与报价';
+}
+
+function extractMobileResumeSnippet() {
+  const r = state.mobileResume || {};
+  const sumFirst = String(r.summary || '').split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean)[0] || '';
+  const expFirst = Array.isArray(r.experiences) && r.experiences.length
+    ? String(r.experiences[0]?.highlights || '').split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean)[0] || ''
+    : '';
+  const raw = sumFirst || expFirst || String(r.exp || '').split(/\\r?\\n/)[0] || '';
+  const highlight = String(raw).replace(/^[•·\\-*\\d.、\\s]+/, '').trim().slice(0, 65);
+  const skillsTop = String(r.skills || '').split(/[\\r\\n,，、]+/).map((s) => s.trim()).filter(Boolean).slice(0, 4).join('、');
+  return {
+    basic: String(r.basic || '').trim(),
+    highlight,
+    skillsTop,
+    hasResume: Boolean(highlight || r.basic || skillsTop),
+  };
+}
+
+function buildLocalMobileChatReplies(job, resolvedScene, hrMsg, snippet, salTarget) {
+  const company = job?.company || '贵司';
+  const title = job?.title || '目标岗位';
+  const salaryText = job?.salary && job.salary !== '面议' ? job.salary : (salTarget ? \`\${salTarget}K 左右\` : '目标区间');
+  const expPhrase = snippet.highlight ? \`我过往实战做到：\${snippet.highlight}\` : '结合我过往核心项目操盘与一线拿结果经验';
+  const basicBracket = snippet.basic ? \`（\${snippet.basic}）\` : '';
+
+  const analysisMap = {
+    核实双休与福利: '核心诉求：礼貌而清晰地问清周末双休、五险一金与底薪/绩效结构，避免白跑一趟。',
+    薪资试探与报价: '核心策略：给出略高于目标的锚定区间，同时反问岗位定薪范围与绩效口径，不盲目报低价。',
+    应对压薪或试用期打折: '核心策略：先用过往量化成果锚定即战力价值，守住固定底薪底线或争取缩短试用期。',
+    回应空窗期或离职原因: '核心策略：不抱怨前司，把空窗期定位为系统复盘与精挑同频赛道，消除稳定性顾虑。',
+    回应学历或跨类目追问: '核心策略：不陷入自证焦虑，直接用可迁移的真实结果与方法论争取面试展示机会。',
+    推进约面或体面婉拒: '核心策略：若匹配则立刻锁定 2 个具体面试时间窗口；若作息/薪资明显不合则礼貌止损。',
+  };
+
+  if (!snippet.hasResume && !hrMsg && DATA.quickChatBank?.[resolvedScene]) {
+    return { analysis: analysisMap[resolvedScene] || '', replies: DATA.quickChatBank[resolvedScene] };
+  }
+
+  const personalizedMap = {
+    核实双休与福利: [
+      {
+        style: '礼貌自然确认型',
+        text: \`您好，感谢回复！我对 \${company}「\${title}」很感兴趣\${basicBracket}，\${expPhrase}。想提前跟您确认两个基础信息方便高效推进：一是咱们团队平时作息是周末双休吗？二是薪资结构大概是纯底薪还是底薪+绩效呢？\`,
+      },
+      {
+        style: '业务切入顺带核实型',
+        text: \`收到，谢谢您的介绍！岗位职责和我的经历很契合（\${expPhrase}），也很看好咱们业务。方便顺便了解下团队上班时间（是否周末双休）以及五险一金缴纳情况吗？合适的话我随时方便约聊。\`,
+      },
+      {
+        style: '直爽高效筛选型',
+        text: \`您好！为了不耽误双方时间，先跟您确认下这个岗位是明确周末双休的吗？我比较看重长期稳定高效的节奏，\${expPhrase}，如果作息和业务方向一致，咱们可以约个时间细聊。\`,
+      },
+    ],
+    薪资试探与报价: [
+      {
+        style: '先问预算锚定型（推荐）',
+        text: \`您好！薪资我更看重权责与匹配度，\${expPhrase}。参考行业水平和我的实战体量，期望大致在贵司标薪（\${salaryText}）的中高档位。方便先了解下咱们这个岗位具体的定薪区间和绩效结构吗？\`,
+      },
+      {
+        style: '价值锚定报价型',
+        text: \`您好！\${expPhrase}\${basicBracket}，我希望整体月薪能落在一个匹配业务产出的合理区间（参考 \${salaryText}），具体可以结合考核指标和年终月数综合沟通，互相认可都好谈。\`,
+      },
+      {
+        style: '反客为主约面型',
+        text: \`您好！薪资方面我有大概心理区间，不过更希望能先跟业务负责人深入聊下团队接下来的目标和挑战（\${expPhrase}），确认人岗高度契合后再按公司定级来谈会更准确，您看先约个面试方便吗？\`,
+      },
+    ],
+    应对压薪或试用期打折: [
+      {
+        style: '底薪保底换绩效型',
+        text: \`理解公司对人效和成本的考量。\${expPhrase}，我很愿意拿结果说话，不过固定底薪希望尽量靠近我的目标线；如果预算紧张，可以把浮动激励放在季度/节点超额达成奖金上，我帮团队做出增量，大家双赢。\`,
+      },
+      {
+        style: '试用期全薪争取型',
+        text: \`关于试用期，我属于能直接上手扛指标的即战力（\${expPhrase}），能帮团队省掉不少试错成本。通常成熟岗试用期可申请全薪，或者咱们约定 1~2 个月清晰转正考核目标，达标即提前转正您看行吗？\`,
+      },
+      {
+        style: '坚守底线礼貌拉回型',
+        text: \`感谢您的坦诚沟通，我也很认可团队方向。不过这个数字离我的底线略有差距，基于我过往的实战产出（\${expPhrase}），如果固定薪资能再往上靠一靠，或在半年调薪机制上书面明确，我非常有诚意推进后续。\`,
+      },
+    ],
+    回应空窗期或离职原因: [
+      {
+        style: '主动复盘蓄力型（推荐）',
+        text: \`上一阶段高强度负责核心业务后（\${expPhrase}），离开后我主动给自己留了一段休整期做系统复盘，把方法论、数据拆解和协作流程彻底梳理沉淀了一遍。现在状态很饱满，希望找一家重视长期价值的团队稳定深耕。\`,
+      },
+      {
+        style: '方向升级聚焦型',
+        text: \`之前在原岗位积累了扎实的一线实战与拿结果经验（\${expPhrase}）；调整复盘后我更清楚下一阶段想聚焦在更贴合自身优势的赛道里把业务做深做透，所以这段时间也在精挑真正同频的团队。\`,
+      },
+      {
+        style: '简短坦诚发简历型',
+        text: \`前一段项目收尾后做了短暂的个人调整和复盘，目前随时可以到岗。我对 \${company}「\${title}」的方向很看好，\${expPhrase}，方便先发份针对贵司的适配简历给您看下吗？\`,
+      },
+    ],
+    回应学历或跨类目追问: [
+      {
+        style: '硬核实战破格型（推荐）',
+        text: \`确实，我在学历/背景上不是传统最标准的履历，这点很坦诚。但咱们这个岗位归根结底看实战拿结果能力——\${expPhrase}，这些实打实的操盘壁垒与避坑经验能帮团队立刻省下试错成本，恳请给一次面试机会让我用具体复盘证明。\`,
+      },
+      {
+        style: '方法论迁移型',
+        text: \`虽然细分行业/类目略有不同，但底层的「用户需求洞察、漏斗数据归因、项目推进与转化提效」逻辑高度相通。\${expPhrase}，把这套成熟打法迁移到贵司赛道上手会很快，我也提前研究了贵司产品，期待细聊。\`,
+      },
+      {
+        style: '先发定制简历验证型',
+        text: \`非常理解贵司的用人标准\${basicBracket}。其实过往几段核心项目都是真刀真枪做出来的，\${expPhrase}。我已经结合贵司岗位要求整理了一份针对性简历，方便先发您看 1 分钟再决定是否约聊吗？\`,
+      },
+    ],
+    推进约面或体面婉拒: [
+      {
+        style: '积极锁约面时间型（推荐）',
+        text: \`好的，非常期待进一步交流！\${expPhrase}，对贵司「\${title}」非常看好。我这边明天上午 10:00 后或下午 14:00-17:00 都方便，线上或线下都可以，您看哪个时间段用人部门方便？\`,
+      },
+      {
+        style: '先发定制简历约面型',
+        text: \`收到，没问题！我已针对 \${company}「\${title}」整理好了适配简历（重点突出了：\${snippet.highlight || '核心项目业绩与复盘数据'}），这就发您。您和用人负责人看完后，我随时配合沟通时间。\`,
+      },
+      {
+        style: '高情商体面婉拒型',
+        text: \`非常感谢您的时间和详细介绍！综合评估了下，目前这个岗位在作息/业务定位上与我现阶段的规划略有差异，为了不耽误贵司的招聘进度，这次就先不打扰了。祝团队早日找到合适人选，希望以后还有交流机会！\`,
+      },
+    ],
+  };
+
+  return {
+    analysis: analysisMap[resolvedScene] || '',
+    replies: personalizedMap[resolvedScene] || personalizedMap['薪资试探与报价'],
+  };
+}
+
+function renderMobileChatOutput(analysisText, replies, detectedScene, usedResume) {
+  const anaEl = document.getElementById('m-chat-analysis');
+  if (anaEl) {
+    if (analysisText || detectedScene) {
+      anaEl.style.display = 'block';
+      anaEl.innerHTML =
+        \`<div class="row between" style="margin-bottom:4px;"><strong>识别场景：\${esc(detectedScene)}</strong>\${usedResume ? '<span class="pill green">已结合我的简历底稿</span>' : '<span class="pill">通用模板（填简历后自动融入个人战绩）</span>'}</div>\` +
+        (analysisText ? \`<div style="font-size:14px;">\${esc(analysisText)}</div>\` : '');
+    } else {
+      anaEl.style.display = 'none';
+    }
+  }
+  document.getElementById('m-chat-replies').innerHTML = (replies || []).map((r, i) => \`
     <div class="card">
       <div class="row between" style="margin-bottom:8px;">
         <strong style="font-size:15.5px;">方案 \${i + 1}：\${esc(r.style)}</strong>
@@ -2158,6 +2363,87 @@ function renderChatBank() {
       <div style="white-space:pre-wrap; font-size:15.5px; line-height:1.7;">\${esc(r.text)}</div>
     </div>
   \`).join('');
+}
+
+function onMobileChatContextChange() {
+  generateMobileSmartChatReply(false);
+}
+
+function renderChatBank() {
+  generateMobileSmartChatReply(false);
+}
+
+async function generateMobileSmartChatReply(useApi = false) {
+  const jobId = document.getElementById('m-chat-job')?.value || '';
+  const job = jobId ? getAllJobs().find((j) => String(j.id) === String(jobId)) : null;
+  const selectedScene = document.getElementById('m-chat-scene')?.value || '自动识别';
+  const hrMsg = document.getElementById('m-chat-hr-msg')?.value.trim() || '';
+  const salTarget = document.getElementById('ms-target')?.value || document.getElementById('s-sal')?.value || '';
+  const snippet = extractMobileResumeSnippet();
+  const resolvedScene = detectMobileChatScenario(hrMsg, selectedScene);
+
+  if (useApi) {
+    const apiCfg = state.mobileApi || {};
+    if (!apiCfg.apiKey) {
+      toast('未配置 API Key，已改用你的简历底稿 0 秒本地生成');
+    } else if (!hrMsg) {
+      toast('用 AI 深度定制请先粘贴 HR 发来的原话，先为你展示本地建议');
+    } else {
+      const btn = document.getElementById('btn-m-chat-ai');
+      if (btn) btn.disabled = true;
+      toast('正在结合你的简历底稿与 HR 原话生成高情商回复...');
+      try {
+        const sys = '你是高情商、懂谈薪与博弈心理的求职沟通顾问。必须严格忠实于候选人提供的真实简历，严禁虚构经历与数据。请只输出合法纯 JSON 对象：{"analysis":"一句话点破HR意图(50字内)","replies":[{"style":"稳重专业型","text":"直接可复制的回复(60~150字)"},{"style":"高情商推进/反问型","text":"直接可复制的回复"},{"style":"坚守底线型","text":"直接可复制的回复"}]}';
+        const user = \`目标岗位：\${job ? job.company + ' - ' + job.title + ' (' + (job.salary || '面议') + ')' : '未指定具体岗位'}\\n识别场景：\${resolvedScene}\\n期望月薪参考：\${salTarget || '未指定'}K\\nHR原话：\${hrMsg}\\n候选人简历信息：\${JSON.stringify({ basic: snippet.basic, highlight: snippet.highlight, skills: snippet.skillsTop })}\`;
+        let rawText = '';
+        if (apiCfg.provider === 'gemini') {
+          const resp = await fetch(\`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=\${encodeURIComponent(apiCfg.apiKey)}\`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ system_instruction: { parts: [{ text: sys }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: { temperature: 0.4 } }),
+          });
+          const d = await resp.json();
+          if (!resp.ok) throw new Error(d?.error?.message || 'API 错误');
+          rawText = (d?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('\\n');
+        } else {
+          const resp = await fetch('https://api.deepseek.com/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiCfg.apiKey },
+            body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'system', content: sys }, { role: 'user', content: user }], temperature: 0.4 }),
+          });
+          const d = await resp.json();
+          if (!resp.ok) throw new Error(d?.error?.message || 'API 错误');
+          rawText = d?.choices?.[0]?.message?.content || '';
+        }
+        const m = rawText.match(/\\{[\\s\\S]*\\}/);
+        if (m) {
+          const parsed = JSON.parse(m[0]);
+          if (Array.isArray(parsed?.replies) && parsed.replies.length) {
+            renderMobileChatOutput(parsed.analysis || '', parsed.replies, resolvedScene, snippet.hasResume);
+            if (btn) btn.disabled = false;
+            toast('AI 结合简历定制回复已就绪！');
+            return;
+          }
+        }
+      } catch (e) {
+        toast('AI 调用异常（' + e.message + '），已自动切换本地生成');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+  }
+
+  const localRes = buildLocalMobileChatReplies(job, resolvedScene, hrMsg, snippet, salTarget);
+  renderMobileChatOutput(localRes.analysis, localRes.replies, resolvedScene, snippet.hasResume);
+}
+
+function copyMobileChatCollabPrompt() {
+  const jobId = document.getElementById('m-chat-job')?.value || '';
+  const job = jobId ? getAllJobs().find((j) => String(j.id) === String(jobId)) : null;
+  const hrMsg = document.getElementById('m-chat-hr-msg')?.value.trim() || '（请在这里补充 HR 发来的原话）';
+  const snippet = extractMobileResumeSnippet();
+  const prompt = \`请扮演高情商求职沟通顾问，结合我的背景与目标岗位，帮我针对用人单位的回复拟定 3 套不同风格、可直接复制发在招聘软件上的高情商回复（每套 60~140 字，自然口语化、守住双休与合理薪资底线，不虚构经历）：\\n【目标岗位】\${job ? job.company + ' · ' + job.title + '（' + (job.salary || '面议') + '）' : '通用岗位'}\\n【我的脱敏背景】\${[snippet.basic, snippet.highlight, snippet.skillsTop].filter(Boolean).join(' ｜ ') || '请结合资深实战能力自然发挥'}\\n【用人单位原话】\${hrMsg}\`;
+  copyText(prompt);
 }
 
 function calcSalary() {

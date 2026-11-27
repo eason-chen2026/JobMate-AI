@@ -356,6 +356,22 @@ try {
   const quickChat = await quickChatResp.json();
   assert.ok(quickChat.replies.length >= 2, '本地快捷聊天回复不足');
 
+  const smartChatResp = await fetch(`${baseUrl}/api/jobs/${job.id}/chat-reply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'quick',
+      scenario: '自动识别',
+      hrMessage: '我们这边底薪15K绩效5K，试用期打八折，你能接受吗？',
+    }),
+  });
+  assert.equal(smartChatResp.status, 200);
+  const smartChat = await smartChatResp.json();
+  assert.equal(smartChat.detectedScenario, '应对压薪或试用期打折', 'HR 原话意图自动识别失败');
+  assert.ok(smartChat.analysis && smartChat.analysis.length > 5, '缺少 HR 意图剖析');
+  assert.ok(smartChat.replies.length >= 3, '智能聊天回复应不少于 3 条');
+  assert.ok(smartChat.usedResume, '本地聊天回复未融合主简历真实信息');
+
   const salaryPatchResp = await fetch(`${baseUrl}/api/jobs/${job.id}/interview-prep`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -444,6 +460,9 @@ try {
   assert.ok(mobileGenericHtml.includes('moveMobileRecTier'), '线上通用版缺少三档调档交互');
   assert.ok(mobileGenericHtml.includes('removeMobileRecItem'), '线上通用版缺少推荐岗位移除交互');
   assert.ok(mobileGenericHtml.includes('importMobileCollabRecJson'), '线上通用版缺少模式 B 批量追加导入交互');
+  assert.ok(mobileGenericHtml.includes('generateMobileSmartChatReply'), '线上通用版缺少结合简历生成 HR 回复逻辑');
+  assert.ok(mobileGenericHtml.includes('jumpToJobChatReply'), '线上通用版缺少岗位卡片直达回复 HR 按钮');
+  assert.ok(mobileGenericHtml.includes('m-chat-hr-msg'), '线上通用版缺少 HR 原话粘贴框');
   console.log('[PASS] 8. 多岗位模板库、6维反问、职业规划、PWA及纯净通用/个人双版手机导出验证通过');
 
   // 9. 测试三档精准推荐分类算法 + 一键采纳候选岗位直接生成专属简历与 3 套打招呼话术

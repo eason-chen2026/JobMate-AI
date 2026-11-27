@@ -458,7 +458,11 @@ export function createAppServer() {
           if (!job) return sendJson(res, 404, { error: '岗位不存在' });
           const mode = body.mode || 'quick';
           if (mode === 'quick') {
-            return sendJson(res, 200, buildQuickChatTemplates(job, body.scenario || '薪资试探与报价', body.hrMessage || ''));
+            return sendJson(
+              res,
+              200,
+              buildQuickChatTemplates(job, body.scenario || '自动识别', body.hrMessage || '', { useResume: true })
+            );
           }
           if (mode === 'api') {
             return sendJson(res, 200, await runApiChatReply(jobId, body));
